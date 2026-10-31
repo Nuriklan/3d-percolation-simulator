@@ -256,7 +256,7 @@ def plot_aspect_ratio_study(
     fig.text(
         0.5,
         0.01,
-        "Simulated with 3D Monte Carlo + Spatial Partitioning Graph Engine | Antigravity CNT Percolation Project",
+        "Simulated with 3D Monte Carlo + Spatial Partitioning Graph Engine",
         ha="center",
         fontsize=8.5,
         color="#555555",
