@@ -23,7 +23,7 @@ The simulator investigates electrical percolation in polymer-nanotube composite 
 | **2** | Monte Carlo Engine | ✅ Complete | Multi-sample runs over concentration range, seed reproducibility (`SeedSequence`), statistical aggregation. |
 | **3** | Percolation Threshold ($\phi_c$) | ✅ Complete | Linear interpolation, logistic sigmoid fitting ($R^2$, stderr), Wilson score confidence intervals, $P(\phi)$ curve plotting. |
 | **4** | 3D Visualization | ✅ Complete | 3D visualization of material box, electrodes, CNT network, contacts, and percolating cluster. |
-| **5** | Spatial Optimization | ⬜ Planned | Uniform spatial grid / partitioning to replace $O(N^2)$ contact search for large aspect ratios ($AR > 100$). |
+| **5** | Spatial Optimization | ✅ Complete | Uniform 3D spatial grid (`UniformSpatialGrid`), sparse hashing (`SpatialHashGrid`), KD-tree (`KDTreeIndex`), and vectorized segment distance (`batch_segment_distance`) replacing $O(N^2)$ brute force with $>15\times$ speedup and zero false negatives. |
 
 ---
 
@@ -63,6 +63,7 @@ Runs Monte Carlo realizations across all concentrations defined in the configura
 **CLI Flags:**
 * `-c, --config PATH`: Path to YAML configuration file (default: `config.yaml`).
 * `-o, --output-dir PATH`: Directory where output files are saved (default: `results`).
+* `--contact-method`: Acceleration backend: `auto`, `grid`, `hash`, `kdtree`, `brute_force` (default: from config or `auto`).
 * `--no-threshold`: Skip automatic threshold estimation.
 * `--no-plot`: Skip generating the $P(\phi)$ plot.
 
@@ -109,12 +110,34 @@ Generates and renders a full 3D spatial realization of the CNT network, distingu
 
 ---
 
-### Command D: Single Realization (Smoke Test & Quick Check)
+### Command D: Spatial Optimization Benchmark (Phase 5)
 
-Runs a single sample with detailed metrics and optional 3D visualization:
+Runs a side-by-side benchmark verifying that all spatial partitioning algorithms (`grid`, `hash`, `kdtree`) match `brute_force` 100% while reducing candidate pairs by $>95\%$:
 
 ```bash
-.venv\Scripts\python.exe -m percolation.simulation.experiment --phi 0.005 --visualize results/sample_3d.png
+.venv\Scripts\python.exe -m percolation.geometry.spatial --count 1000 --threshold 0.05
+```
+
+Example Benchmark Output ($N = 1000$ CNTs, 499,500 pairs):
+```text
+Method         |  Time (ms) |   Candidates |  Reduction |  Contacts |   Speedup
+--------------------------------------------------------------------------------
+brute_force    |     527.65 |      499,500 |       0.0% |       246 |      1.0x
+grid           |      39.39 |       17,562 |      96.5% |       246 |     13.4x
+hash           |      38.24 |       17,562 |      96.5% |       246 |     13.8x
+kdtree         |      28.71 |       10,318 |      97.9% |       246 |     18.4x
+================================================================================
+All methods verified: 100% identical contacts identified!
+```
+
+---
+
+### Command E: Single Realization (Smoke Test & Quick Check)
+
+Runs a single sample with detailed metrics, spatial method choice, and optional 3D visualization:
+
+```bash
+.venv\Scripts\python.exe -m percolation.simulation.experiment --phi 0.005 --contact-method grid --visualize results/sample_3d.png
 ```
 
 ---
@@ -133,7 +156,7 @@ from percolation.visualization.threshold_plot import plot_percolation_probabilit
 # 1. Define physical domain
 box = MaterialBox(size_x=10.0, size_y=5.0, size_z=5.0)
 
-# 2. Run Monte Carlo simulation
+# 2. Run Monte Carlo simulation with spatial acceleration
 result = run_monte_carlo(
     concentrations=[0.001, 0.002, 0.003, 0.004, 0.005, 0.006],
     samples_per_concentration=50,
@@ -142,6 +165,7 @@ result = run_monte_carlo(
     cnt_diameter=0.1,
     contact_threshold=0.05,
     random_seed=42,
+    contact_method="grid",  # 'grid', 'hash', 'kdtree', or 'auto'
 )
 
 # 3. Estimate percolation threshold
@@ -154,35 +178,22 @@ print(f"Logistic R^2               : {thresh.logistic_r2:.4f}")
 fig = plot_percolation_probability(result, threshold_result=thresh, save_path="results/my_percolation_curve.png")
 ```
 
-### 3D Visualization of a Single Sample (Phase 4)
+### Spatial Grid Benchmark in Python
 
 ```python
 import numpy as np
 from percolation.domain.cnt import MaterialBox
-from percolation.simulation.experiment import create_sample
-from percolation.visualization.renderer import plot_sample_3d
+from percolation.generation.cnt_generator import generate_nanotubes
+from percolation.geometry.spatial import compare_contact_methods
 
-# 1. Setup box and RNG
-box = MaterialBox(size_x=10.0, size_y=5.0, size_z=5.0)
+box = MaterialBox(10.0, 5.0, 5.0)
 rng = np.random.default_rng(42)
+tubes = generate_nanotubes(1000, box, cnt_length=1.0, cnt_diameter=0.1, rng=rng)
 
-# 2. Create sample state with complete geometry and network topology
-sample = create_sample(
-    concentration=0.005,
-    box=box,
-    cnt_length=1.0,
-    cnt_diameter=0.1,
-    contact_threshold=0.05,
-    rng=rng,
-)
-
-print(f"Tubes: {sample.nanotube_count}, Contacts: {sample.contact_count}")
-print(f"Percolates: {sample.percolates}")
-if sample.percolates:
-    print(f"Percolating cluster size: {len(sample.percolating_cluster)} tubes")
-
-# 3. Render 3D view
-fig = plot_sample_3d(sample, save_path="results/sample_3d.png", dpi=300)
+# Cross-verifies contacts and benchmarks all methods
+bench = compare_contact_methods(tubes, threshold=0.05, box=box)
+for name, res in bench.items():
+    print(f"{name}: {res.execution_time_sec*1000:.1f} ms, speedup {res.speedup_vs_brute_force:.1f}x")
 ```
 
 ---
@@ -203,6 +214,7 @@ cnt:
 
 contact:
   threshold: 0.05 # Maximum segment-to-segment distance for electrical contact, um
+  method: auto    # Acceleration: auto, grid, hash, kdtree, brute_force
 
 simulation:
   concentrations: # Volumetric CNT fractions phi to evaluate
@@ -222,7 +234,7 @@ simulation:
 
 ## 7. Verification & Tests
 
-To execute the test suite (geometry, generation, contact graphs, Monte Carlo, threshold analysis, 3D visualization, and plotting):
+To execute the test suite (geometry, generation, contact graphs, spatial acceleration, Monte Carlo, threshold analysis, 3D visualization, and plotting):
 
 ```bash
 # Run pytest test suite

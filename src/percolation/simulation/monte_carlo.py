@@ -1,12 +1,13 @@
 """
 Monte Carlo simulation runner for CNT percolation.
 
-Phase 2 implementation:
+Phase 2 & 5 implementation:
 - Loop over a range of concentrations φ.
 - Multiple independent, reproducible samples per concentration.
 - Statistical aggregation: P(φ) = N_percolating / N_samples.
 - Reproducibility via NumPy SeedSequence hierarchy.
 - Configuration loading from YAML and export to JSON/CSV.
+- Spatial acceleration (UniformSpatialGrid, KDTreeIndex, SpatialHashGrid) via contact_method.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ def run_concentration(
     electrode_threshold: float | None = None,
     record_samples: bool = False,
     sample_callback: Callable[[int, SimulationResult], None] | None = None,
+    contact_method: str = "auto",
 ) -> ConcentrationResult:
     """Run Monte Carlo simulation for a single CNT concentration.
 
@@ -54,6 +56,7 @@ def run_concentration(
     electrode_threshold : distance threshold to electrodes (defaults to contact_threshold)
     record_samples      : whether to retain individual SimulationResult instances
     sample_callback     : optional callback invoked after each sample (index, result)
+    contact_method      : contact detection algorithm ('auto', 'grid', 'hash', 'kdtree', 'brute_force')
 
     Returns
     -------
@@ -84,6 +87,7 @@ def run_concentration(
             contact_threshold=contact_threshold,
             rng=rng,
             electrode_threshold=electrode_threshold,
+            contact_method=contact_method,
         )
 
         if sample_res.percolates:
@@ -123,6 +127,7 @@ def run_monte_carlo(
     electrode_threshold: float | None = None,
     record_samples: bool = False,
     concentration_callback: Callable[[int, int, ConcentrationResult], None] | None = None,
+    contact_method: str = "auto",
 ) -> MonteCarloResult:
     """Run full Monte Carlo study over multiple concentrations.
 
@@ -139,6 +144,7 @@ def run_monte_carlo(
     record_samples            : whether to retain individual SimulationResult instances
     concentration_callback    : optional callback invoked after each concentration completes
                                 (conc_idx, total_concs, result)
+    contact_method            : contact search method ('auto', 'grid', 'hash', 'kdtree', 'brute_force')
 
     Returns
     -------
@@ -164,6 +170,7 @@ def run_monte_carlo(
             seed_sequence=sseq,
             electrode_threshold=electrode_threshold,
             record_samples=record_samples,
+            contact_method=contact_method,
         )
         concentration_results.append(conc_res)
 
@@ -184,6 +191,7 @@ def run_from_config(
     config_path: str | Path,
     record_samples: bool = False,
     verbose: bool = True,
+    contact_method: str | None = None,
 ) -> MonteCarloResult:
     """Run Monte Carlo simulation configured via a YAML file."""
     path = Path(config_path)
@@ -202,17 +210,22 @@ def run_from_config(
     cnt_diameter = float(cfg["cnt"]["diameter"])
     contact_threshold = float(cfg["contact"]["threshold"])
 
+    # Method priority: CLI override > config > default "auto"
+    if contact_method is None:
+        contact_method = str(cfg.get("contact", {}).get("method", "auto"))
+
     concentrations = [float(c) for c in cfg["simulation"]["concentrations"]]
     samples = int(cfg["simulation"]["samples_per_concentration"])
     seed = int(cfg["simulation"].get("random_seed", 42))
 
     if verbose:
         print("=" * 70, flush=True)
-        print("  CNT Percolation Simulator — Phase 2: Monte Carlo Simulation", flush=True)
+        print("  CNT Percolation Simulator — Monte Carlo Simulation (Phase 2 & 5)", flush=True)
         print("=" * 70, flush=True)
         print(f"Domain Box           : {box.size_x} x {box.size_y} x {box.size_z} um", flush=True)
         print(f"CNT Dimensions       : L = {cnt_length} um, D = {cnt_diameter} um (AR = {cnt_length / cnt_diameter:.1f})", flush=True)
         print(f"Contact Threshold    : {contact_threshold} um", flush=True)
+        print(f"Contact Method       : {contact_method}", flush=True)
         print(f"Concentrations (phi) : {concentrations}", flush=True)
         print(f"Samples per phi      : {samples}", flush=True)
         print(f"Master Seed          : {seed}", flush=True)
@@ -245,6 +258,7 @@ def run_from_config(
         random_seed=seed,
         record_samples=record_samples,
         concentration_callback=progress_callback if verbose else None,
+        contact_method=contact_method,
     )
 
     if verbose:
@@ -257,7 +271,7 @@ def run_from_config(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Monte Carlo CNT Percolation Simulator (Phases 2 & 3)")
+    parser = argparse.ArgumentParser(description="Monte Carlo CNT Percolation Simulator (Phases 2, 3 & 5)")
     parser.add_argument(
         "--config",
         "-c",
@@ -273,6 +287,13 @@ def main() -> None:
         help="Directory to save simulation results (default: results)",
     )
     parser.add_argument(
+        "--contact-method",
+        type=str,
+        default=None,
+        choices=["auto", "grid", "hash", "kdtree", "brute_force"],
+        help="Override contact detection algorithm (default: from config or auto)",
+    )
+    parser.add_argument(
         "--no-threshold",
         action="store_true",
         help="Skip automatic percolation threshold estimation",
@@ -284,7 +305,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    result = run_from_config(args.config, verbose=True)
+    result = run_from_config(args.config, verbose=True, contact_method=args.contact_method)
 
     out_dir = Path(args.output_dir)
     json_path = out_dir / "monte_carlo_results.json"

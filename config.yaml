@@ -9,9 +9,11 @@
 #   box_real = 10 μm → box.x   = 10.0
 #
 # At φ=0.005, box=10×5×5, L=1, D=0.1:
-#   N ≈ φ·V_box / (π·D²·L/4) ≈ 159 tubes, N² ≈ 25k pairs  → feasible
+#   N ≈ φ·V_box / (π·D²·L/4) ≈ 159 tubes
 #
-# For AR=100 (D=0.01): N≈15,900 at φ=0.005 → requires Phase 5 spatial index.
+# Phase 5 spatial acceleration:
+#   method options: auto, grid (UniformSpatialGrid), hash (SpatialHashGrid),
+#                   kdtree (cKDTree), brute_force
 
 box:
   x: 10.0
@@ -20,10 +22,11 @@ box:
 
 cnt:
   length: 1.0
-  diameter: 0.1    # AR = 10 — feasible under O(N²)
+  diameter: 0.1
 
 contact:
   threshold: 0.05
+  method: auto   # auto, grid, hash, kdtree, brute_force
 
 simulation:
   concentrations:
