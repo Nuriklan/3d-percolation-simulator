@@ -5,7 +5,7 @@ Pipeline:
     concentration phi
         → N = count_from_concentration(...)
         → generate_nanotubes(N, ...)
-        → find_contacts(threshold)
+        → find_contacts(threshold, method=contact_method)
         → build_graph(...)
         → check_percolation(graph)
         → [find_percolating_cluster & find_percolating_path]
@@ -36,6 +36,7 @@ def create_sample(
     contact_threshold: float,
     rng: np.random.Generator,
     electrode_threshold: float | None = None,
+    contact_method: str = "auto",
 ) -> SampleState:
     """Generate a single sample and return its complete geometrical and graph state.
 
@@ -49,6 +50,7 @@ def create_sample(
     rng                 : reproducible random Generator
     electrode_threshold : maximum distance to electrode to form contact
                           (defaults to contact_threshold if None)
+    contact_method      : contact search algorithm ('auto', 'grid', 'hash', 'kdtree', 'brute_force')
 
     Returns
     -------
@@ -61,7 +63,7 @@ def create_sample(
 
     n = count_from_concentration(concentration, box, cnt_length, cnt_diameter)
     tubes = generate_nanotubes(n, box, cnt_length, cnt_diameter, rng)
-    contacts = find_contacts(tubes, contact_threshold)
+    contacts = find_contacts(tubes, contact_threshold, box=box, method=contact_method)
     graph = build_graph(tubes, contacts, box, electrode_threshold=electrode_threshold)
     percolates = check_percolation(graph)
     cluster = find_percolating_cluster(graph)
@@ -90,6 +92,7 @@ def run_sample(
     contact_threshold: float,
     rng: np.random.Generator,
     electrode_threshold: float | None = None,
+    contact_method: str = "auto",
 ) -> SimulationResult:
     """Run a single Monte Carlo sample (fast evaluation path).
 
@@ -103,6 +106,7 @@ def run_sample(
     rng                 : reproducible random Generator
     electrode_threshold : maximum distance to electrode to form contact
                           (defaults to contact_threshold if None)
+    contact_method      : contact search algorithm ('auto', 'grid', 'hash', 'kdtree', 'brute_force')
 
     Returns
     -------
@@ -113,7 +117,7 @@ def run_sample(
 
     n = count_from_concentration(concentration, box, cnt_length, cnt_diameter)
     tubes = generate_nanotubes(n, box, cnt_length, cnt_diameter, rng)
-    contacts = find_contacts(tubes, contact_threshold)
+    contacts = find_contacts(tubes, contact_threshold, box=box, method=contact_method)
     graph = build_graph(tubes, contacts, box, electrode_threshold=electrode_threshold)
     percolates = check_percolation(graph)
 
@@ -172,6 +176,13 @@ def main() -> None:
         help="Contact distance threshold (default: 0.05 um)",
     )
     parser.add_argument(
+        "--contact-method",
+        type=str,
+        default="auto",
+        choices=["auto", "grid", "hash", "kdtree", "brute_force"],
+        help="Contact detection algorithm (default: auto)",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -196,6 +207,7 @@ def main() -> None:
     ar = args.length / args.diameter if args.diameter > 0 else 0.0
     print(f"CNT Geometry       : L={args.length} um, D={args.diameter} um (Aspect Ratio={ar:.1f})")
     print(f"Contact Threshold  : {args.threshold} um")
+    print(f"Contact Method     : {args.contact_method}")
     print(f"Concentration (phi): {args.phi:.4f}")
     print(f"Random Seed        : {args.seed}")
     print("-" * 65)
@@ -207,6 +219,7 @@ def main() -> None:
         cnt_diameter=args.diameter,
         contact_threshold=args.threshold,
         rng=rng,
+        contact_method=args.contact_method,
     )
 
     print(f"Nanotubes Placed   : {sample.nanotube_count}")

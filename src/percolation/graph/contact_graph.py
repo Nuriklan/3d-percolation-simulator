@@ -13,27 +13,23 @@ Edges:
     LEFT  — CNT i   if CNT i touches the left electrode plane
     RIGHT — CNT i   if CNT i touches the right electrode plane
 
-Electrode contact criterion (Phase 1):
-    A CNT touches an electrode if either endpoint is within
-    `electrode_reach` of the electrode plane.
-    For simplicity, electrode_reach = cnt_length / 2
-    (i.e., the tube centre is within L/2 of the plane).
-    Equivalently: min(p0.x, p1.x) ≤ 0  or max(p0.x, p1.x) ≥ box.size_x
-    But since endpoints are clipped to [0, size_x], we check
-    whether p0.x == 0 or p1.x == 0 etc.  In practice we just check
-    whether x_min(tube) ≤ 0 and x_max(tube) ≥ size_x.
-
-    The robust condition used here:
-        touches LEFT  if min(p0.x, p1.x) ≤ 0.0
-        touches RIGHT if max(p0.x, p1.x) ≥ size_x
+Electrode contact criterion:
+    touches LEFT  if min(p0.x, p1.x) ≤ electrode_threshold
+    touches RIGHT if max(p0.x, p1.x) ≥ box.size_x - electrode_threshold
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Sequence
 
 from percolation.domain.cnt import Contact, MaterialBox, Nanotube
-from percolation.geometry.distance import nanotube_distance
+from percolation.geometry.spatial import (
+    KDTreeIndex,
+    SpatialHashGrid,
+    UniformSpatialGrid,
+    find_contacts_brute_force,
+)
 
 # Special electrode node labels
 LEFT = "LEFT"
@@ -42,58 +38,67 @@ NodeId = int | str
 
 
 def find_contacts(
-    tubes: list[Nanotube],
+    tubes: Sequence[Nanotube],
     threshold: float,
+    box: MaterialBox | None = None,
+    method: str = "auto",
+    cell_size: float | None = None,
 ) -> list[Contact]:
-    """Pairwise contact detection with exact bounding rejection filter.
+    """Find all contact pairs between nanotubes within threshold distance.
 
     Parameters
     ----------
-    tubes     : list of Nanotubes
-    threshold : maximum segment-to-segment distance to count as contact, μm
+    tubes     : Sequence of Nanotubes
+    threshold : Maximum segment-to-segment distance to count as contact, μm
+    box       : Simulation domain box (optional, used for grid bounds)
+    method    : Acceleration method:
+                - 'auto'        : brute_force for N < 30, uniform grid for N >= 30
+                - 'grid'        : UniformSpatialGrid (Phase 5 spatial partitioning)
+                - 'hash'        : SpatialHashGrid (sparse 3D hash table)
+                - 'kdtree'      : KDTreeIndex (SciPy cKDTree on bounding spheres)
+                - 'brute_force' : pairwise O(N^2) comparison
+    cell_size : Custom cell size for grid and hash methods (optional)
 
     Returns
     -------
     list[Contact]
-        All pairs (i, j) with i < j and distance ≤ threshold.
+        All pairs (i, j) with i < j and distance ≤ threshold, sorted by (tube_a, tube_b).
     """
-    contacts: list[Contact] = []
     n = len(tubes)
     if n < 2:
-        return contacts
+        return []
 
-    centers = [t.center for t in tubes]
-    half_lengths = [0.5 * t.length for t in tubes]
+    method = method.lower()
+    if method == "auto":
+        # For very small systems (N < 30), overhead of grid creation is not worth it
+        if n < 30:
+            method = "brute_force"
+        else:
+            method = "grid"
 
-    for i in range(n):
-        ci = centers[i]
-        hl_i = half_lengths[i]
-        tube_i = tubes[i]
-        for j in range(i + 1, n):
-            reach = hl_i + half_lengths[j] + threshold
-            cj = centers[j]
-            dx = abs(ci[0] - cj[0])
-            if dx > reach:
-                continue
-            dy = abs(ci[1] - cj[1])
-            if dy > reach:
-                continue
-            dz = abs(ci[2] - cj[2])
-            if dz > reach:
-                continue
+    if method == "brute_force":
+        contacts = find_contacts_brute_force(tubes, threshold)
+    elif method == "grid":
+        grid = UniformSpatialGrid(tubes, threshold, box=box, cell_size=cell_size)
+        contacts = grid.find_contacts()
+    elif method == "hash":
+        s_hash = SpatialHashGrid(tubes, threshold, cell_size=cell_size)
+        contacts = s_hash.find_contacts()
+    elif method == "kdtree":
+        tree_idx = KDTreeIndex(tubes, threshold)
+        contacts = tree_idx.find_contacts()
+    else:
+        raise ValueError(
+            f"Unknown contact detection method: '{method}'. "
+            f"Supported methods: 'auto', 'grid', 'hash', 'kdtree', 'brute_force'."
+        )
 
-            if (dx * dx + dy * dy + dz * dz) > reach * reach:
-                continue
-
-            d = nanotube_distance(tube_i, tubes[j])
-            if d <= threshold:
-                contacts.append(Contact(tube_a=i, tube_b=j, distance=d))
-    return contacts
+    return sorted(contacts, key=lambda c: (c.tube_a, c.tube_b))
 
 
 def build_graph(
-    tubes: list[Nanotube],
-    contacts: list[Contact],
+    tubes: Sequence[Nanotube],
+    contacts: Sequence[Contact],
     box: MaterialBox,
     electrode_threshold: float = 0.0,
 ) -> dict[NodeId, list[NodeId]]:
@@ -138,4 +143,3 @@ def build_graph(
         graph[RIGHT] = []
 
     return dict(graph)
-
