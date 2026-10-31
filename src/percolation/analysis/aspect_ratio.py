@@ -1,10 +1,10 @@
 """
-Aspect Ratio Study — Phase 6 implementation.
+Aspect Ratio Study - Phase 6 implementation.
 
 Investigates percolation threshold scaling against CNT geometric aspect ratio:
     AR = L / D
 Verifies Balberg's excluded volume theory:
-    phi_c(AR) = C * AR^(-beta), where beta ≈ 1.0.
+    phi_c(AR) = C * AR^(-beta), where beta ~ 1.0.
 """
 
 from __future__ import annotations
@@ -39,13 +39,13 @@ class AspectRatioPoint:
     Attributes
     ----------
     aspect_ratio     : CNT aspect ratio AR = L / D
-    length           : CNT length L, μm
-    diameter         : CNT diameter D, μm
-    phi_c            : estimated percolation threshold φ_c
-    phi_c_stderr     : standard error of φ_c estimate (if available)
-    r_squared        : goodness-of-fit R² of logistic sigmoid (if available)
+    length           : CNT length L, um
+    diameter         : CNT diameter D, um
+    phi_c            : estimated percolation threshold phi_c
+    phi_c_stderr     : standard error of phi_c estimate (if available)
+    r_squared        : goodness-of-fit R^2 of logistic sigmoid (if available)
     concentrations   : sampled concentration values
-    probabilities    : observed percolation probabilities P(φ)
+    probabilities    : observed percolation probabilities P(phi)
     mc_result        : optional full MonteCarloResult
     threshold_result : optional full ThresholdResult
     """
@@ -118,9 +118,9 @@ class PowerLawFitResult:
 
     Attributes
     ----------
-    beta          : scaling power exponent (theoretically ≈ 1.0)
+    beta          : scaling power exponent (theoretically ~ 1.0)
     c_coefficient : pre-exponential constant C
-    r_squared     : coefficient of determination R² in log-log space
+    r_squared     : coefficient of determination R^2 in log-log space
     beta_stderr   : standard error of exponent beta
     c_stderr      : standard error of constant C
     p_value       : p-value from two-sided Wald test
@@ -287,7 +287,7 @@ def fit_power_law(
     Returns
     -------
     PowerLawFitResult
-        Fitted exponent beta, prefactor C, R², and standard errors.
+        Fitted exponent beta, prefactor C, R^2, and standard errors.
 
     Raises
     ------
@@ -364,8 +364,8 @@ def run_aspect_ratio_study(
     For each specified AR = L / D:
     1. Determines tube geometry (L, D) and contact threshold.
     2. Runs Monte Carlo simulations across an appropriate concentration grid.
-    3. Estimates the percolation threshold φ_c using logistic sigmoid fitting / linear interpolation.
-    4. Aggregates data and fits the scaling law φ_c = C · AR^(-β).
+    3. Estimates the percolation threshold phi_c using logistic sigmoid fitting / linear interpolation.
+    4. Aggregates data and fits the scaling law phi_c = C * AR^(-beta).
 
     Parameters
     ----------
@@ -418,7 +418,7 @@ def run_aspect_ratio_study(
         if concentrations_by_ar is not None and ar in concentrations_by_ar:
             phis = list(concentrations_by_ar[ar])
         else:
-            # Theoretical Balberg center: phi_c ≈ 1.2 / AR
+            # Theoretical Balberg center: phi_c ~ 1.2 / AR
             phi_center = 1.2 / ar
             phis = list(np.linspace(
                 concentration_span[0] * phi_center,
@@ -482,7 +482,7 @@ def run_aspect_ratio_study(
 def main(args: Sequence[str] | None = None) -> int:
     """Command-line interface for the Aspect Ratio Study."""
     parser = argparse.ArgumentParser(
-        description="CNT Aspect Ratio Study: Scaling of percolation threshold φ_c(AR) and Balberg power law fit."
+        description="CNT Aspect Ratio Study: Scaling of percolation threshold phi_c(AR) and Balberg power law fit."
     )
     parser.add_argument(
         "--ar-values",
@@ -500,7 +500,7 @@ def main(args: Sequence[str] | None = None) -> int:
         "--cnt-length",
         type=float,
         default=1.0,
-        help="Fixed CNT length L (default: 1.0 μm)",
+        help="Fixed CNT length L (default: 1.0 um)",
     )
     parser.add_argument(
         "--box-size",
@@ -508,7 +508,7 @@ def main(args: Sequence[str] | None = None) -> int:
         nargs=3,
         default=[3.0, 2.0, 2.0],
         metavar=("X", "Y", "Z"),
-        help="Domain dimensions in μm (default: 3.0 2.0 2.0)",
+        help="Domain dimensions in um (default: 3.0 2.0 2.0)",
     )
     parser.add_argument(
         "--seed",
@@ -547,15 +547,15 @@ def main(args: Sequence[str] | None = None) -> int:
     box = MaterialBox(size_x=parsed.box_size[0], size_y=parsed.box_size[1], size_z=parsed.box_size[2])
 
     print("=" * 70)
-    print("CNT Percolation Simulator — Phase 6: Aspect Ratio Study")
+    print("CNT Percolation Simulator - Phase 6: Aspect Ratio Study")
     print(f"Evaluating AR values: {ar_list}")
-    print(f"Domain Box: {box.size_x} x {box.size_y} x {box.size_z} μm, CNT Length: {parsed.cnt_length} μm")
+    print(f"Domain Box: {box.size_x} x {box.size_y} x {box.size_z} um, CNT Length: {parsed.cnt_length} um")
     print(f"Monte Carlo samples: {parsed.samples} per concentration point")
     print("=" * 70)
 
     def on_progress(done: int, total: int, pt: AspectRatioPoint):
         r2_str = f"{pt.r_squared:.3f}" if pt.r_squared is not None else "N/A"
-        print(f"[{done}/{total}] AR={pt.aspect_ratio:5.1f} | D={pt.diameter:.4f} μm | φ_c={pt.phi_c:.5f} | R²={r2_str}")
+        print(f"[{done}/{total}] AR={pt.aspect_ratio:5.1f} | D={pt.diameter:.4f} um | phi_c={pt.phi_c:.5f} | R^2={r2_str}")
 
     study = run_aspect_ratio_study(
         ar_values=ar_list,
@@ -576,11 +576,11 @@ def main(args: Sequence[str] | None = None) -> int:
     study.save_csv(csv_path)
 
     print("\n" + "-" * 70)
-    print("Scaling Law Fit: φ_c = C · AR^(-β)")
-    err_str = f" ± {study.beta_stderr:.3f}" if study.beta_stderr is not None else ""
-    print(f"  Exponent β        : {study.beta:.3f}{err_str}  (Theory: β ≈ 1.00)")
+    print("Scaling Law Fit: phi_c = C * AR^(-beta)")
+    err_str = f" +/- {study.beta_stderr:.3f}" if study.beta_stderr is not None else ""
+    print(f"  Exponent beta        : {study.beta:.3f}{err_str}  (Theory: beta ~ 1.00)")
     print(f"  Prefactor C       : {study.c_coefficient:.4f}")
-    print(f"  Goodness-of-fit R²: {study.r_squared:.4f}")
+    print(f"  Goodness-of-fit R^2: {study.r_squared:.4f}")
     print(f"Saved JSON : {json_path}")
     print(f"Saved CSV  : {csv_path}")
 
