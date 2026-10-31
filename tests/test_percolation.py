@@ -13,7 +13,6 @@ Phase 5 (spatial optimisation) will make the full-scale config feasible.
 """
 
 import numpy as np
-import pytest
 
 from percolation.domain.cnt import MaterialBox
 from percolation.simulation.experiment import run_sample

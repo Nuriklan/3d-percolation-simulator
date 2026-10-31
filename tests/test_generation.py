@@ -17,7 +17,6 @@ from percolation.generation.cnt_generator import (
     generate_nanotubes,
 )
 
-
 BOX = MaterialBox(size_x=10.0, size_y=5.0, size_z=5.0)
 L = 1.0
 D = 0.01

@@ -12,10 +12,9 @@ Phase 2 implementation:
 from __future__ import annotations
 
 import argparse
-import sys
 import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Callable, Sequence
 
 import numpy as np
 import yaml
@@ -258,7 +257,7 @@ def run_from_config(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Monte Carlo CNT Percolation Simulator (Phase 2)")
+    parser = argparse.ArgumentParser(description="Monte Carlo CNT Percolation Simulator (Phases 2 & 3)")
     parser.add_argument(
         "--config",
         "-c",
@@ -273,6 +272,16 @@ def main() -> None:
         default="results",
         help="Directory to save simulation results (default: results)",
     )
+    parser.add_argument(
+        "--no-threshold",
+        action="store_true",
+        help="Skip automatic percolation threshold estimation",
+    )
+    parser.add_argument(
+        "--no-plot",
+        action="store_true",
+        help="Skip generating percolation probability plot",
+    )
     args = parser.parse_args()
 
     result = run_from_config(args.config, verbose=True)
@@ -284,9 +293,49 @@ def main() -> None:
     result.save_json(json_path)
     result.save_csv(csv_path)
 
-    print(f"\nResults successfully saved:")
+    print("\nResults successfully saved:")
     print(f"  JSON: {json_path}")
     print(f"  CSV : {csv_path}")
+
+    if not args.no_threshold:
+        from percolation.analysis.threshold import estimate_threshold
+        from percolation.visualization.threshold_plot import plot_percolation_probability
+
+        thresh = estimate_threshold(result)
+        thresh_path = out_dir / "threshold_results.json"
+        thresh.save_json(thresh_path)
+
+        print("\n" + "=" * 70)
+        print("  Percolation Threshold Analysis (Phase 3)")
+        print("=" * 70)
+        print(f"Primary Method        : {thresh.method}")
+        if thresh.phi_c is not None:
+            if thresh.logistic_phi_c_stderr is not None:
+                print(f"Estimated phi_c       : {thresh.phi_c:.6f} +/- {thresh.logistic_phi_c_stderr:.6f}")
+            else:
+                print(f"Estimated phi_c       : {thresh.phi_c:.6f}")
+        else:
+            print("Estimated phi_c       : Not reached within simulated range")
+
+        if thresh.phi_c_linear is not None:
+            print(f"Linear Interp phi_c   : {thresh.phi_c_linear:.6f}")
+
+        if thresh.logistic_fit is not None and thresh.logistic_fit.converged:
+            print(f"Logistic Steepness k  : {thresh.logistic_fit.k:.2f}")
+            print(f"Logistic R^2          : {thresh.logistic_fit.r_squared:.4f}")
+
+        print(f"Saved threshold data  : {thresh_path}")
+
+        if not args.no_plot:
+            plot_path = out_dir / "percolation_probability.png"
+            plot_percolation_probability(
+                mc_result=result,
+                threshold_result=thresh,
+                save_path=plot_path,
+            )
+            print(f"Saved P(phi) plot     : {plot_path}")
+
+        print("=" * 70)
 
 
 if __name__ == "__main__":

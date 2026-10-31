@@ -15,10 +15,9 @@ Percolation checker tests:
 import numpy as np
 import pytest
 
-from percolation.domain.cnt import Contact, MaterialBox, Nanotube
+from percolation.domain.cnt import MaterialBox, Nanotube
 from percolation.graph.contact_graph import LEFT, RIGHT, build_graph, find_contacts
 from percolation.graph.percolation import check_percolation, find_percolating_path
-
 
 BOX = MaterialBox(size_x=10.0, size_y=5.0, size_z=5.0)
 

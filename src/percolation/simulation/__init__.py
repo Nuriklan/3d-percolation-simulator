@@ -3,10 +3,10 @@
 from percolation.simulation.experiment import run_sample
 
 __all__ = [
-    "run_sample",
     "run_concentration",
-    "run_monte_carlo",
     "run_from_config",
+    "run_monte_carlo",
+    "run_sample",
 ]
 
 

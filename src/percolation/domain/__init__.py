@@ -1,6 +1,6 @@
 from percolation.domain.cnt import (
-    Contact,
     ConcentrationResult,
+    Contact,
     MaterialBox,
     MonteCarloResult,
     Nanotube,
@@ -9,8 +9,8 @@ from percolation.domain.cnt import (
 )
 
 __all__ = [
-    "Contact",
     "ConcentrationResult",
+    "Contact",
     "MaterialBox",
     "MonteCarloResult",
     "Nanotube",

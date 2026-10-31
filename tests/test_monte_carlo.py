@@ -2,17 +2,18 @@
 Unit and integration tests for Phase 2: Monte Carlo simulation.
 """
 
-from pathlib import Path
-import json
 import csv
+import json
+from pathlib import Path
+
 import pytest
 import yaml
 
 from percolation.domain.cnt import MaterialBox
 from percolation.simulation.monte_carlo import (
     run_concentration,
-    run_monte_carlo,
     run_from_config,
+    run_monte_carlo,
 )
 
 # Fast domain for unit testing
