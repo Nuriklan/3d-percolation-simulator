@@ -10,6 +10,8 @@ Graph tests cover:
 Percolation checker tests:
 - Empty graph
 - Single node loop (should not percolate without RIGHT)
+- Percolating cluster identification
+- Component clustering
 """
 
 import numpy as np
@@ -17,7 +19,12 @@ import pytest
 
 from percolation.domain.cnt import MaterialBox, Nanotube
 from percolation.graph.contact_graph import LEFT, RIGHT, build_graph, find_contacts
-from percolation.graph.percolation import check_percolation, find_percolating_path
+from percolation.graph.percolation import (
+    check_percolation,
+    find_all_clusters,
+    find_percolating_cluster,
+    find_percolating_path,
+)
 
 BOX = MaterialBox(size_x=10.0, size_y=5.0, size_z=5.0)
 
@@ -139,7 +146,7 @@ class TestCheckPercolation:
 
 
 # ---------------------------------------------------------------------------
-# Path finding
+# Path and Cluster finding
 # ---------------------------------------------------------------------------
 
 class TestFindPercolatingPath:
@@ -158,3 +165,48 @@ class TestFindPercolatingPath:
         graph = build_graph([t0], [], BOX)
         path = find_percolating_path(graph)
         assert path is None
+
+
+class TestFindPercolatingCluster:
+    def test_cluster_found_when_percolates(self):
+        t0 = make_tube(0.0, 3.5)
+        t1 = make_tube(3.5, 7.0)
+        t2 = make_tube(7.0, 10.0)
+        t3_isolated = make_tube(1.0, 2.0, y=1.0)
+        tubes = [t0, t1, t2, t3_isolated]
+        contacts = find_contacts(tubes, threshold=0.001)
+        graph = build_graph(tubes, contacts, BOX)
+
+        cluster = find_percolating_cluster(graph)
+        assert cluster == {0, 1, 2}
+        assert 3 not in cluster
+
+    def test_cluster_empty_when_no_percolation(self):
+        t0 = make_tube(0.0, 3.0)
+        t1 = make_tube(7.0, 10.0)
+        tubes = [t0, t1]
+        contacts = find_contacts(tubes, threshold=0.001)
+        graph = build_graph(tubes, contacts, BOX)
+
+        cluster = find_percolating_cluster(graph)
+        assert cluster == set()
+
+
+class TestFindAllClusters:
+    def test_multiple_clusters(self):
+        t0 = make_tube(0.0, 2.0, y=1.0)
+        t1 = make_tube(2.0, 4.0, y=1.0)
+        t2 = make_tube(5.0, 7.0, y=3.0)
+        t3 = make_tube(7.0, 9.0, y=3.0)
+        t4_isolated = make_tube(0.0, 2.0, y=4.5)
+        tubes = [t0, t1, t2, t3, t4_isolated]
+        contacts = find_contacts(tubes, threshold=0.001)
+        graph = build_graph(tubes, contacts, BOX)
+
+        clusters = find_all_clusters(graph, num_tubes=len(tubes))
+        assert len(clusters) == 3
+        # Should contain {0, 1}, {2, 3}, {4}
+        cluster_sets = [frozenset(c) for c in clusters]
+        assert frozenset({0, 1}) in cluster_sets
+        assert frozenset({2, 3}) in cluster_sets
+        assert frozenset({4}) in cluster_sets

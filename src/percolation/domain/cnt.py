@@ -3,7 +3,7 @@ Domain model: core data structures.
 
 Physical assumptions documented here:
 - CNT modelled as a 3D line segment (capsule) with fixed length and diameter.
-- MaterialBox is a rectangular parallelepiped.  Current flows along X axis.
+- MaterialBox is a rectangular parallelepiped. Current flows along X axis.
 - A Contact exists when the minimum distance between two CNT segments ≤ threshold.
 """
 
@@ -140,6 +140,58 @@ class SimulationResult:
     nanotube_count: int
     percolates: bool
     contact_count: int = field(default=0)
+
+
+# ---------------------------------------------------------------------------
+# Full sample state for inspection and 3D visualization (Phase 4)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SampleState:
+    """Complete geometrical and topological state of a single CNT sample.
+
+    Attributes
+    ----------
+    box                 : material domain box
+    tubes               : list of Nanotubes placed inside the box
+    contacts            : list of pairwise Contact instances
+    graph               : adjacency list representation of contact network
+    percolates          : True if LEFT to RIGHT path exists
+    percolating_cluster : set of nanotube indices in percolating network
+    percolating_path    : sequence of nodes from LEFT to RIGHT, or None
+    concentration       : volumetric CNT fraction φ
+    cnt_length          : length L of each nanotube, μm
+    cnt_diameter        : diameter D of each nanotube, μm
+    contact_threshold   : distance threshold for contact, μm
+    """
+
+    box: MaterialBox
+    tubes: list[Nanotube]
+    contacts: list[Contact]
+    graph: dict[int | str, list[int | str]]
+    percolates: bool
+    percolating_cluster: set[int] = field(default_factory=set)
+    percolating_path: list[int | str] | None = None
+    concentration: float = 0.0
+    cnt_length: float = 0.0
+    cnt_diameter: float = 0.0
+    contact_threshold: float = 0.0
+
+    @property
+    def nanotube_count(self) -> int:
+        return len(self.tubes)
+
+    @property
+    def contact_count(self) -> int:
+        return len(self.contacts)
+
+    def to_simulation_result(self) -> SimulationResult:
+        return SimulationResult(
+            concentration=self.concentration,
+            nanotube_count=self.nanotube_count,
+            percolates=self.percolates,
+            contact_count=self.contact_count,
+        )
 
 
 # ---------------------------------------------------------------------------
