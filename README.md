@@ -22,7 +22,7 @@ The simulator investigates electrical percolation in polymer-nanotube composite 
 | **1** | Minimal Percolation Model | ✅ Complete | 3D line segment geometry, contact detection, graph construction, BFS connectivity (`LEFT` $\to$ `RIGHT`). |
 | **2** | Monte Carlo Engine | ✅ Complete | Multi-sample runs over concentration range, seed reproducibility (`SeedSequence`), statistical aggregation. |
 | **3** | Percolation Threshold ($\phi_c$) | ✅ Complete | Linear interpolation, logistic sigmoid fitting ($R^2$, stderr), Wilson score confidence intervals, $P(\phi)$ curve plotting. |
-| **4** | 3D Visualization | ⏳ In progress | 3D visualization of material box, electrodes, CNT network, and percolating cluster. |
+| **4** | 3D Visualization | ✅ Complete | 3D visualization of material box, electrodes, CNT network, contacts, and percolating cluster. |
 | **5** | Spatial Optimization | ⬜ Planned | Uniform spatial grid / partitioning to replace $O(N^2)$ contact search for large aspect ratios ($AR > 100$). |
 
 ---
@@ -90,12 +90,31 @@ To analyze or re-plot previously saved Monte Carlo data without re-running the s
 
 ---
 
-### Command C: Single Realization (Smoke Test)
+### Command C: 3D Visualization of Realized CNT Sample (Phase 4)
 
-Runs a single sample with detailed contact metrics:
+Generates and renders a full 3D spatial realization of the CNT network, distinguishing isolated tubes, the percolating cluster, conductive backbone path, electrodes, and contact junctions:
 
 ```bash
-.venv\Scripts\python.exe -m percolation.simulation.experiment
+.venv\Scripts\python.exe -m percolation.visualization.renderer --phi 0.005 --seed 42 --output results/sample_3d.png
+```
+
+**CLI Flags:**
+* `--phi FLOAT`: Volumetric CNT fraction $\phi$ (default: `0.005`).
+* `--seed INT`: Random seed (default: `42`).
+* `-o, --output PATH`: Path to save rendered 3D scene (default: `results/sample_3d.png`).
+* `--length FLOAT`: CNT length $L$ in $\mu\text{m}$ (default: `1.0`).
+* `--diameter FLOAT`: CNT diameter $D$ in $\mu\text{m}$ (default: `0.1`).
+* `--threshold FLOAT`: Contact distance threshold in $\mu\text{m}$ (default: `0.05`).
+* `--dpi INT`: Output resolution in DPI (default: `300`).
+
+---
+
+### Command D: Single Realization (Smoke Test & Quick Check)
+
+Runs a single sample with detailed metrics and optional 3D visualization:
+
+```bash
+.venv\Scripts\python.exe -m percolation.simulation.experiment --phi 0.005 --visualize results/sample_3d.png
 ```
 
 ---
@@ -135,29 +154,35 @@ print(f"Logistic R^2               : {thresh.logistic_r2:.4f}")
 fig = plot_percolation_probability(result, threshold_result=thresh, save_path="results/my_percolation_curve.png")
 ```
 
-### Inspecting an Individual Sample & Finding the Conductive Path
+### 3D Visualization of a Single Sample (Phase 4)
 
 ```python
 import numpy as np
 from percolation.domain.cnt import MaterialBox
-from percolation.simulation.experiment import run_sample
-from percolation.graph.contact_graph import build_graph
-from percolation.graph.percolation import find_percolating_path
+from percolation.simulation.experiment import create_sample
+from percolation.visualization.renderer import plot_sample_3d
 
-box = MaterialBox(size_x=3.0, size_y=2.0, size_z=2.0)
-rng = np.random.default_rng(1234)
+# 1. Setup box and RNG
+box = MaterialBox(size_x=10.0, size_y=5.0, size_z=5.0)
+rng = np.random.default_rng(42)
 
-sample = run_sample(
-    concentration=0.04,
+# 2. Create sample state with complete geometry and network topology
+sample = create_sample(
+    concentration=0.005,
     box=box,
     cnt_length=1.0,
-    cnt_diameter=0.05,
+    cnt_diameter=0.1,
     contact_threshold=0.05,
     rng=rng,
 )
 
-print(f"Placed {sample.nanotube_count} CNTs, found {sample.contact_count} contacts.")
-print(f"Does the system percolate? -> {sample.percolates}")
+print(f"Tubes: {sample.nanotube_count}, Contacts: {sample.contact_count}")
+print(f"Percolates: {sample.percolates}")
+if sample.percolates:
+    print(f"Percolating cluster size: {len(sample.percolating_cluster)} tubes")
+
+# 3. Render 3D view
+fig = plot_sample_3d(sample, save_path="results/sample_3d.png", dpi=300)
 ```
 
 ---
@@ -197,7 +222,7 @@ simulation:
 
 ## 7. Verification & Tests
 
-To execute the test suite (geometry, generation, contact graphs, Monte Carlo, threshold analysis, and plotting):
+To execute the test suite (geometry, generation, contact graphs, Monte Carlo, threshold analysis, 3D visualization, and plotting):
 
 ```bash
 # Run pytest test suite
