@@ -1,0 +1,39 @@
+# Experiment configuration for CNT percolation simulation
+#
+# Dimensionless / normalized units
+# ─────────────────────────────────
+# All lengths are in units of the CNT length L.
+# Real mapping example:
+#   L_real  = 1 μm   → length = 1.0
+#   D_real  = 0.1 μm → diameter = 0.1   (AR = 10)
+#   box_real = 10 μm → box.x   = 10.0
+#
+# At φ=0.005, box=10×5×5, L=1, D=0.1:
+#   N ≈ φ·V_box / (π·D²·L/4) ≈ 159 tubes, N² ≈ 25k pairs  → feasible
+#
+# For AR=100 (D=0.01): N≈15,900 at φ=0.005 → requires Phase 5 spatial index.
+
+box:
+  x: 10.0
+  y: 5.0
+  z: 5.0
+
+cnt:
+  length: 1.0
+  diameter: 0.1    # AR = 10 — feasible under O(N²)
+
+contact:
+  threshold: 0.05
+
+simulation:
+  concentrations:
+    - 0.001
+    - 0.002
+    - 0.003
+    - 0.004
+    - 0.005
+    - 0.006
+    - 0.007
+    - 0.008
+  samples_per_concentration: 100
+  random_seed: 42

@@ -1,0 +1,293 @@
+"""
+Monte Carlo simulation runner for CNT percolation.
+
+Phase 2 implementation:
+- Loop over a range of concentrations φ.
+- Multiple independent, reproducible samples per concentration.
+- Statistical aggregation: P(φ) = N_percolating / N_samples.
+- Reproducibility via NumPy SeedSequence hierarchy.
+- Configuration loading from YAML and export to JSON/CSV.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+from typing import Callable, Sequence
+
+import numpy as np
+import yaml
+
+from percolation.domain.cnt import (
+    ConcentrationResult,
+    MaterialBox,
+    MonteCarloResult,
+    SimulationResult,
+)
+from percolation.simulation.experiment import run_sample
+
+
+def run_concentration(
+    concentration: float,
+    samples: int,
+    box: MaterialBox,
+    cnt_length: float,
+    cnt_diameter: float,
+    contact_threshold: float,
+    seed_sequence: np.random.SeedSequence | int,
+    electrode_threshold: float | None = None,
+    record_samples: bool = False,
+    sample_callback: Callable[[int, SimulationResult], None] | None = None,
+) -> ConcentrationResult:
+    """Run Monte Carlo simulation for a single CNT concentration.
+
+    Parameters
+    ----------
+    concentration       : volumetric CNT fraction φ
+    samples             : number of Monte Carlo realizations
+    box                 : simulation domain box
+    cnt_length          : CNT length L, μm
+    cnt_diameter        : CNT diameter D, μm
+    contact_threshold   : distance threshold for CNT-CNT contact, μm
+    seed_sequence       : SeedSequence or integer seed for spawning reproducible sample RNGs
+    electrode_threshold : distance threshold to electrodes (defaults to contact_threshold)
+    record_samples      : whether to retain individual SimulationResult instances
+    sample_callback     : optional callback invoked after each sample (index, result)
+
+    Returns
+    -------
+    ConcentrationResult
+    """
+    if samples <= 0:
+        raise ValueError(f"Number of samples must be positive, got {samples}")
+
+    if isinstance(seed_sequence, int):
+        root_seq = np.random.SeedSequence(seed_sequence)
+    else:
+        root_seq = seed_sequence
+
+    child_seeds = root_seq.spawn(samples)
+
+    percolating_count = 0
+    total_contacts = 0
+    total_tubes = 0
+    recorded_results: list[SimulationResult] = []
+
+    for idx, sseq in enumerate(child_seeds):
+        rng = np.random.default_rng(sseq)
+        sample_res = run_sample(
+            concentration=concentration,
+            box=box,
+            cnt_length=cnt_length,
+            cnt_diameter=cnt_diameter,
+            contact_threshold=contact_threshold,
+            rng=rng,
+            electrode_threshold=electrode_threshold,
+        )
+
+        if sample_res.percolates:
+            percolating_count += 1
+        total_contacts += sample_res.contact_count
+        total_tubes += sample_res.nanotube_count
+
+        if record_samples:
+            recorded_results.append(sample_res)
+
+        if sample_callback is not None:
+            sample_callback(idx, sample_res)
+
+    probability = percolating_count / samples
+    avg_contacts = total_contacts / samples
+    avg_tubes = total_tubes / samples
+
+    return ConcentrationResult(
+        concentration=concentration,
+        samples=samples,
+        percolating_samples=percolating_count,
+        probability=probability,
+        avg_contact_count=avg_contacts,
+        avg_nanotube_count=avg_tubes,
+        sample_results=recorded_results,
+    )
+
+
+def run_monte_carlo(
+    concentrations: Sequence[float],
+    samples_per_concentration: int,
+    box: MaterialBox,
+    cnt_length: float,
+    cnt_diameter: float,
+    contact_threshold: float,
+    random_seed: int = 42,
+    electrode_threshold: float | None = None,
+    record_samples: bool = False,
+    concentration_callback: Callable[[int, int, ConcentrationResult], None] | None = None,
+) -> MonteCarloResult:
+    """Run full Monte Carlo study over multiple concentrations.
+
+    Parameters
+    ----------
+    concentrations            : sequence of volumetric fractions φ
+    samples_per_concentration : number of realizations per concentration
+    box                       : simulation domain
+    cnt_length                : CNT length L, μm
+    cnt_diameter              : CNT diameter D, μm
+    contact_threshold         : distance threshold for contact, μm
+    random_seed               : master random seed for full reproducibility
+    electrode_threshold       : distance threshold to electrodes
+    record_samples            : whether to retain individual SimulationResult instances
+    concentration_callback    : optional callback invoked after each concentration completes
+                                (conc_idx, total_concs, result)
+
+    Returns
+    -------
+    MonteCarloResult
+    """
+    if not concentrations:
+        raise ValueError("concentrations list must not be empty.")
+
+    root_seed_seq = np.random.SeedSequence(random_seed)
+    conc_seed_seqs = root_seed_seq.spawn(len(concentrations))
+
+    concentration_results: list[ConcentrationResult] = []
+    total_concs = len(concentrations)
+
+    for i, (phi, sseq) in enumerate(zip(concentrations, conc_seed_seqs)):
+        conc_res = run_concentration(
+            concentration=phi,
+            samples=samples_per_concentration,
+            box=box,
+            cnt_length=cnt_length,
+            cnt_diameter=cnt_diameter,
+            contact_threshold=contact_threshold,
+            seed_sequence=sseq,
+            electrode_threshold=electrode_threshold,
+            record_samples=record_samples,
+        )
+        concentration_results.append(conc_res)
+
+        if concentration_callback is not None:
+            concentration_callback(i, total_concs, conc_res)
+
+    return MonteCarloResult(
+        box=box,
+        cnt_length=cnt_length,
+        cnt_diameter=cnt_diameter,
+        contact_threshold=contact_threshold,
+        random_seed=random_seed,
+        concentration_results=concentration_results,
+    )
+
+
+def run_from_config(
+    config_path: str | Path,
+    record_samples: bool = False,
+    verbose: bool = True,
+) -> MonteCarloResult:
+    """Run Monte Carlo simulation configured via a YAML file."""
+    path = Path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Configuration file not found: {path}")
+
+    with open(path, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+
+    box = MaterialBox(
+        size_x=float(cfg["box"]["x"]),
+        size_y=float(cfg["box"]["y"]),
+        size_z=float(cfg["box"]["z"]),
+    )
+    cnt_length = float(cfg["cnt"]["length"])
+    cnt_diameter = float(cfg["cnt"]["diameter"])
+    contact_threshold = float(cfg["contact"]["threshold"])
+
+    concentrations = [float(c) for c in cfg["simulation"]["concentrations"]]
+    samples = int(cfg["simulation"]["samples_per_concentration"])
+    seed = int(cfg["simulation"].get("random_seed", 42))
+
+    if verbose:
+        print("=" * 70, flush=True)
+        print("  CNT Percolation Simulator — Phase 2: Monte Carlo Simulation", flush=True)
+        print("=" * 70, flush=True)
+        print(f"Domain Box           : {box.size_x} x {box.size_y} x {box.size_z} um", flush=True)
+        print(f"CNT Dimensions       : L = {cnt_length} um, D = {cnt_diameter} um (AR = {cnt_length / cnt_diameter:.1f})", flush=True)
+        print(f"Contact Threshold    : {contact_threshold} um", flush=True)
+        print(f"Concentrations (phi) : {concentrations}", flush=True)
+        print(f"Samples per phi      : {samples}", flush=True)
+        print(f"Master Seed          : {seed}", flush=True)
+        print("-" * 70, flush=True)
+        print(f"{'phi':>8} | {'N (avg)':>8} | {'Contacts':>10} | {'Percolated':>12} | {'P(phi)':>8} | {'Elapsed':>8}", flush=True)
+        print("-" * 70, flush=True)
+
+    start_time = time.perf_counter()
+
+    def progress_callback(idx: int, total: int, r: ConcentrationResult) -> None:
+        if verbose:
+            elapsed = time.perf_counter() - start_time
+            print(
+                f"{r.concentration:8.4f} | "
+                f"{r.avg_nanotube_count:8.1f} | "
+                f"{r.avg_contact_count:10.1f} | "
+                f"{r.percolating_samples:5d} / {r.samples:<5d} | "
+                f"{r.probability:8.3f} | "
+                f"{elapsed:7.2f}s",
+                flush=True,
+            )
+
+    result = run_monte_carlo(
+        concentrations=concentrations,
+        samples_per_concentration=samples,
+        box=box,
+        cnt_length=cnt_length,
+        cnt_diameter=cnt_diameter,
+        contact_threshold=contact_threshold,
+        random_seed=seed,
+        record_samples=record_samples,
+        concentration_callback=progress_callback if verbose else None,
+    )
+
+    if verbose:
+        total_elapsed = time.perf_counter() - start_time
+        print("-" * 70, flush=True)
+        print(f"Total simulation time: {total_elapsed:.2f} seconds", flush=True)
+        print("=" * 70, flush=True)
+
+    return result
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Monte Carlo CNT Percolation Simulator (Phase 2)")
+    parser.add_argument(
+        "--config",
+        "-c",
+        type=str,
+        default="config.yaml",
+        help="Path to YAML configuration file (default: config.yaml)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        "-o",
+        type=str,
+        default="results",
+        help="Directory to save simulation results (default: results)",
+    )
+    args = parser.parse_args()
+
+    result = run_from_config(args.config, verbose=True)
+
+    out_dir = Path(args.output_dir)
+    json_path = out_dir / "monte_carlo_results.json"
+    csv_path = out_dir / "monte_carlo_results.csv"
+
+    result.save_json(json_path)
+    result.save_csv(csv_path)
+
+    print(f"\nResults successfully saved:")
+    print(f"  JSON: {json_path}")
+    print(f"  CSV : {csv_path}")
+
+
+if __name__ == "__main__":
+    main()
