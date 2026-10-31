@@ -10,9 +10,9 @@ Physical assumptions documented here:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
-
 
 # ---------------------------------------------------------------------------
 # Primitive: 3-component vector
@@ -219,6 +219,22 @@ class MonteCarloResult:
     @property
     def probabilities(self) -> list[float]:
         return [r.probability for r in self.concentration_results]
+
+    def estimate_threshold(
+        self,
+        confidence_level: float = 0.95,
+        target_probability: float = 0.5,
+        prefer_method: str = "logistic",
+    ):
+        """Estimate percolation threshold from this Monte Carlo dataset."""
+        from percolation.analysis.threshold import estimate_threshold
+
+        return estimate_threshold(
+            self,
+            confidence_level=confidence_level,
+            target_probability=target_probability,
+            prefer_method=prefer_method,
+        )
 
     def to_dict(self) -> dict:
         return {

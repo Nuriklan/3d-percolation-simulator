@@ -31,7 +31,6 @@ Electrode contact criterion (Phase 1):
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Union
 
 from percolation.domain.cnt import Contact, MaterialBox, Nanotube
 from percolation.geometry.distance import nanotube_distance
@@ -39,7 +38,7 @@ from percolation.geometry.distance import nanotube_distance
 # Special electrode node labels
 LEFT = "LEFT"
 RIGHT = "RIGHT"
-NodeId = Union[int, str]
+NodeId = int | str
 
 
 def find_contacts(

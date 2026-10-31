@@ -5,9 +5,8 @@ Percolation check: BFS to detect LEFT → RIGHT connectivity.
 from __future__ import annotations
 
 from collections import deque
-from typing import Union
 
-NodeId = Union[int, str]
+NodeId = int | str
 LEFT = "LEFT"
 RIGHT = "RIGHT"
 
