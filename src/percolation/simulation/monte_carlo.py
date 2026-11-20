@@ -24,6 +24,7 @@ from percolation.domain.cnt import (
     ConcentrationResult,
     MaterialBox,
     MonteCarloResult,
+    OrientationConfig,
     SimulationResult,
 )
 from percolation.simulation.experiment import run_sample
@@ -41,6 +42,7 @@ def run_concentration(
     record_samples: bool = False,
     sample_callback: Callable[[int, SimulationResult], None] | None = None,
     contact_method: str = "auto",
+    orientation: OrientationConfig | None = None,
 ) -> ConcentrationResult:
     """Run Monte Carlo simulation for a single CNT concentration.
 
@@ -57,6 +59,7 @@ def run_concentration(
     record_samples      : whether to retain individual SimulationResult instances
     sample_callback     : optional callback invoked after each sample (index, result)
     contact_method      : contact detection algorithm ('auto', 'grid', 'hash', 'kdtree', 'brute_force')
+    orientation         : optional OrientationConfig (defaults to isotropic)
 
     Returns
     -------
@@ -88,6 +91,7 @@ def run_concentration(
             rng=rng,
             electrode_threshold=electrode_threshold,
             contact_method=contact_method,
+            orientation=orientation,
         )
 
         if sample_res.percolates:
@@ -128,6 +132,7 @@ def run_monte_carlo(
     record_samples: bool = False,
     concentration_callback: Callable[[int, int, ConcentrationResult], None] | None = None,
     contact_method: str = "auto",
+    orientation: OrientationConfig | None = None,
 ) -> MonteCarloResult:
     """Run full Monte Carlo study over multiple concentrations.
 
@@ -145,6 +150,7 @@ def run_monte_carlo(
     concentration_callback    : optional callback invoked after each concentration completes
                                 (conc_idx, total_concs, result)
     contact_method            : contact search method ('auto', 'grid', 'hash', 'kdtree', 'brute_force')
+    orientation               : optional OrientationConfig (defaults to isotropic)
 
     Returns
     -------
@@ -152,6 +158,8 @@ def run_monte_carlo(
     """
     if not concentrations:
         raise ValueError("concentrations list must not be empty.")
+
+    orient_cfg = orientation if orientation is not None else OrientationConfig.isotropic()
 
     root_seed_seq = np.random.SeedSequence(random_seed)
     conc_seed_seqs = root_seed_seq.spawn(len(concentrations))
@@ -171,6 +179,7 @@ def run_monte_carlo(
             electrode_threshold=electrode_threshold,
             record_samples=record_samples,
             contact_method=contact_method,
+            orientation=orient_cfg,
         )
         concentration_results.append(conc_res)
 
@@ -184,6 +193,7 @@ def run_monte_carlo(
         contact_threshold=contact_threshold,
         random_seed=random_seed,
         concentration_results=concentration_results,
+        orientation=orient_cfg,
     )
 
 
@@ -192,6 +202,7 @@ def run_from_config(
     record_samples: bool = False,
     verbose: bool = True,
     contact_method: str | None = None,
+    orientation: OrientationConfig | None = None,
 ) -> MonteCarloResult:
     """Run Monte Carlo simulation configured via a YAML file."""
     path = Path(config_path)
@@ -210,6 +221,11 @@ def run_from_config(
     cnt_diameter = float(cfg["cnt"]["diameter"])
     contact_threshold = float(cfg["contact"]["threshold"])
 
+    # Orientation priority: explicit argument > config > default isotropic
+    if orientation is None:
+        orient_raw = cfg.get("cnt", {}).get("orientation")
+        orientation = OrientationConfig.from_dict(orient_raw)
+
     # Method priority: CLI override > config > default "auto"
     if contact_method is None:
         contact_method = str(cfg.get("contact", {}).get("method", "auto"))
@@ -220,10 +236,11 @@ def run_from_config(
 
     if verbose:
         print("=" * 70, flush=True)
-        print("  CNT Percolation Simulator — Monte Carlo Simulation (Phase 2 & 5)", flush=True)
+        print("  CNT Percolation Simulator - Monte Carlo Simulation", flush=True)
         print("=" * 70, flush=True)
         print(f"Domain Box           : {box.size_x} x {box.size_y} x {box.size_z} um", flush=True)
         print(f"CNT Dimensions       : L = {cnt_length} um, D = {cnt_diameter} um (AR = {cnt_length / cnt_diameter:.1f})", flush=True)
+        print(f"CNT Orientation      : {orientation.label} (S_x = {orientation.theoretical_order_parameter('x'):.3f})", flush=True)
         print(f"Contact Threshold    : {contact_threshold} um", flush=True)
         print(f"Contact Method       : {contact_method}", flush=True)
         print(f"Concentrations (phi) : {concentrations}", flush=True)
@@ -259,6 +276,7 @@ def run_from_config(
         record_samples=record_samples,
         concentration_callback=progress_callback if verbose else None,
         contact_method=contact_method,
+        orientation=orientation,
     )
 
     if verbose:
@@ -294,6 +312,31 @@ def main() -> None:
         help="Override contact detection algorithm (default: from config or auto)",
     )
     parser.add_argument(
+        "--orientation-mode",
+        type=str,
+        default=None,
+        choices=["isotropic", "aligned", "partially_aligned", "fisher"],
+        help="Override CNT orientation mode (default: from config or isotropic)",
+    )
+    parser.add_argument(
+        "--orientation-axis",
+        type=str,
+        default="x",
+        help="Preferred alignment axis when --orientation-mode is set (default: x)",
+    )
+    parser.add_argument(
+        "--max-angle",
+        type=float,
+        default=30.0,
+        help="Cone half-angle in degrees when --orientation-mode=partially_aligned (default: 30.0)",
+    )
+    parser.add_argument(
+        "--kappa",
+        type=float,
+        default=5.0,
+        help="Concentration parameter kappa when --orientation-mode=fisher (default: 5.0)",
+    )
+    parser.add_argument(
         "--no-threshold",
         action="store_true",
         help="Skip automatic percolation threshold estimation",
@@ -305,7 +348,21 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    result = run_from_config(args.config, verbose=True, contact_method=args.contact_method)
+    orientation_override = None
+    if args.orientation_mode is not None:
+        orientation_override = OrientationConfig(
+            mode=args.orientation_mode,
+            axis=args.orientation_axis,
+            max_angle_deg=args.max_angle,
+            kappa=args.kappa,
+        )
+
+    result = run_from_config(
+        args.config,
+        verbose=True,
+        contact_method=args.contact_method,
+        orientation=orientation_override,
+    )
 
     out_dir = Path(args.output_dir)
     json_path = out_dir / "monte_carlo_results.json"
