@@ -30,3 +30,6 @@ htmlcov/
 # Generated simulation results (keep folder tracked via .gitkeep)
 results/*
 !results/.gitkeep
+
+# Generated PDF reports
+reports/
