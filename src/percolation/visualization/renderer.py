@@ -336,10 +336,16 @@ def plot_sample_3d(
         ax.set_title(title, fontsize=11, fontweight="bold", pad=12)
     else:
         status = "PERCOLATING (Path exists!)" if sample.percolates else "NON-PERCOLATING"
+        orient_part = (
+            f" | {sample.orientation.label}"
+            if sample.orientation.mode != "isotropic"
+            else ""
+        )
         sample_title = (
             f"3D CNT Network Realization - {status}\n"
             f"phi={sample.concentration:.4f} | N={sample.nanotube_count} | "
             f"Contacts={sample.contact_count} | L={sample.cnt_length} um, D={sample.cnt_diameter} um"
+            f"{orient_part}"
         )
         ax.set_title(sample_title, fontsize=10, fontweight="bold", pad=12)
 
@@ -416,6 +422,31 @@ def main() -> None:
         help="Random seed (default: 42)",
     )
     parser.add_argument(
+        "--orientation-mode",
+        type=str,
+        default="isotropic",
+        choices=["isotropic", "aligned", "partially_aligned", "fisher"],
+        help="CNT orientation distribution mode (default: isotropic)",
+    )
+    parser.add_argument(
+        "--orientation-axis",
+        type=str,
+        default="x",
+        help="Preferred alignment axis: 'x', 'y', or 'z' (default: x)",
+    )
+    parser.add_argument(
+        "--max-angle",
+        type=float,
+        default=30.0,
+        help="Cone half-angle in degrees for partially_aligned mode (default: 30.0)",
+    )
+    parser.add_argument(
+        "--kappa",
+        type=float,
+        default=5.0,
+        help="Concentration parameter kappa for fisher mode (default: 5.0)",
+    )
+    parser.add_argument(
         "-o", "--output",
         type=str,
         default="results/sample_3d.png",
@@ -430,16 +461,22 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    from percolation.domain.cnt import MaterialBox
+    from percolation.domain.cnt import MaterialBox, OrientationConfig
     from percolation.simulation.experiment import create_sample
 
     box = MaterialBox(size_x=args.box_x, size_y=args.box_y, size_z=args.box_z)
     rng = np.random.default_rng(args.seed)
+    orientation = OrientationConfig(
+        mode=args.orientation_mode,
+        axis=args.orientation_axis,
+        max_angle_deg=args.max_angle,
+        kappa=args.kappa,
+    )
 
     print("=" * 65)
     print("  CNT 3D Visualization Generator")
     print("=" * 65)
-    print(f"Generating sample at phi = {args.phi:.4f} (seed {args.seed}) ...")
+    print(f"Generating sample at phi = {args.phi:.4f} (seed {args.seed}, {orientation.label}) ...")
 
     sample = create_sample(
         concentration=args.phi,
@@ -448,6 +485,7 @@ def main() -> None:
         cnt_diameter=args.diameter,
         contact_threshold=args.threshold,
         rng=rng,
+        orientation=orientation,
     )
 
     print(f"Placed {sample.nanotube_count} CNTs, found {sample.contact_count} contacts.")

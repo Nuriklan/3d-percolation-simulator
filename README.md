@@ -24,6 +24,8 @@ The simulator investigates electrical percolation in polymer-nanotube composite 
 | **3** | Percolation Threshold ($\phi_c$) | ✅ Complete | Linear interpolation, logistic sigmoid fitting ($R^2$, stderr), Wilson score confidence intervals, $P(\phi)$ curve plotting. |
 | **4** | 3D Visualization | ✅ Complete | 3D visualization of material box, electrodes, CNT network, contacts, and percolating cluster. |
 | **5** | Spatial Optimization | ✅ Complete | Uniform 3D spatial grid (`UniformSpatialGrid`), sparse hashing (`SpatialHashGrid`), KD-tree (`KDTreeIndex`), and vectorized segment distance (`batch_segment_distance`) replacing $O(N^2)$ brute force with $>15\times$ speedup and zero false negatives. |
+| **6** | Aspect Ratio Study | ✅ Complete | Comparative Monte Carlo scaling study $\phi_c(AR) = C \cdot AR^{-\beta}$ confirming Balberg's excluded-volume law ($\beta \approx 1$), JSON/CSV export, and 2-panel publication plot. |
+| **7** | CNT Orientation Study | ✅ Complete | Configurable 3D orientation distributions (`isotropic`, `aligned`, `partially_aligned` cone, `fisher`), 3D Hermans order parameter $S_x$, adaptive $\phi_c(S_x)$ study, 2-panel visualization, and CLI/YAML support. |
 
 ---
 
@@ -134,11 +136,43 @@ All methods verified: 100% identical contacts identified!
 
 ### Command E: Single Realization (Smoke Test & Quick Check)
 
-Runs a single sample with detailed metrics, spatial method choice, and optional 3D visualization:
+Runs a single sample with detailed metrics, spatial method choice, orientation options, and optional 3D visualization:
 
 ```bash
-.venv\Scripts\python.exe -m percolation.simulation.experiment --phi 0.005 --contact-method grid --visualize results/sample_3d.png
+.venv\Scripts\python.exe -m percolation.simulation.experiment --phi 0.005 --contact-method grid --orientation-mode partially_aligned --max-angle 30 --visualize results/sample_3d.png
 ```
+
+---
+
+### Command F: Aspect Ratio Scaling Study (Phase 6)
+
+Evaluates percolation threshold scaling $\phi_c(AR)$ across multiple aspect ratios and fits Balberg's power law $\phi_c = C \cdot AR^{-\beta}$:
+
+```bash
+.venv\Scripts\python.exe -m percolation.analysis.aspect_ratio --ar-values 15,25,40,60,100 --samples 25 --output-dir results
+```
+
+---
+
+### Command G: CNT Orientation Study (Phase 7)
+
+Investigates the dependence of the percolation threshold $\phi_c$ on 3D CNT alignment (from transverse and isotropic through partial cone alignment to strictly aligned along the transport axis):
+
+```bash
+.venv\Scripts\python.exe -m percolation.analysis.orientation --angles 0,15,30,45,60,75,90 --include-transverse --samples 25 --output-dir results
+```
+
+**CLI Flags:**
+* `--angles LIST`: Comma-separated cone half-angles in degrees `[0..90]` (default: `0,15,30,45,60,75,90`).
+* `--axis AXIS`: Preferred alignment axis: `x`, `y`, or `z` (default: `x`).
+* `--include-transverse`: Also evaluate a transverse-aligned baseline ($S_x = -0.5$).
+* `--samples INT`: Monte Carlo realizations per concentration point (default: `25`).
+* `--n-concentrations INT`: Concentration grid points per orientation (default: `7`).
+* `--cnt-length`, `--cnt-diameter`, `--threshold`, `--box-size`, `--seed`, `--contact-method`, `--output-dir`, `--no-plot`, `--dpi`.
+
+**Generated Outputs in `results/`:**
+* `orientation_study.json` & `orientation_study.csv`: Threshold $\phi_c$, Hermans order parameter ($S_{\text{theory}}$, $S_{\text{measured}}$), and ratio $\phi_c / \phi_c^{\text{iso}}$ for each orientation.
+* `orientation_study.png`: Two-panel publication plot showing $P(\phi)$ S-curves and $\phi_c(S_x)$.
 
 ---
 
@@ -211,6 +245,11 @@ box:
 cnt:
   length: 1.0   # CNT length L, um
   diameter: 0.1 # CNT diameter D, um (Aspect Ratio AR = L / D = 10)
+  orientation:
+    mode: isotropic    # isotropic, aligned, partially_aligned, fisher
+    axis: x            # preferred axis: x, y, z, or [dx, dy, dz]
+    max_angle_deg: 90  # cone half-angle in degrees [0..90] (partially_aligned)
+    kappa: 0.0         # concentration parameter >= 0 (fisher)
 
 contact:
   threshold: 0.05 # Maximum segment-to-segment distance for electrical contact, um

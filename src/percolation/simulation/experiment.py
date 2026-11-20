@@ -18,7 +18,12 @@ import argparse
 
 import numpy as np
 
-from percolation.domain.cnt import MaterialBox, SampleState, SimulationResult
+from percolation.domain.cnt import (
+    MaterialBox,
+    OrientationConfig,
+    SampleState,
+    SimulationResult,
+)
 from percolation.generation.cnt_generator import count_from_concentration, generate_nanotubes
 from percolation.graph.contact_graph import build_graph, find_contacts
 from percolation.graph.percolation import (
@@ -37,6 +42,7 @@ def create_sample(
     rng: np.random.Generator,
     electrode_threshold: float | None = None,
     contact_method: str = "auto",
+    orientation: OrientationConfig | None = None,
 ) -> SampleState:
     """Generate a single sample and return its complete geometrical and graph state.
 
@@ -51,6 +57,7 @@ def create_sample(
     electrode_threshold : maximum distance to electrode to form contact
                           (defaults to contact_threshold if None)
     contact_method      : contact search algorithm ('auto', 'grid', 'hash', 'kdtree', 'brute_force')
+    orientation         : optional OrientationConfig (defaults to isotropic)
 
     Returns
     -------
@@ -60,9 +67,10 @@ def create_sample(
     """
     if electrode_threshold is None:
         electrode_threshold = contact_threshold
+    orient_cfg = orientation if orientation is not None else OrientationConfig.isotropic()
 
     n = count_from_concentration(concentration, box, cnt_length, cnt_diameter)
-    tubes = generate_nanotubes(n, box, cnt_length, cnt_diameter, rng)
+    tubes = generate_nanotubes(n, box, cnt_length, cnt_diameter, rng, orientation=orient_cfg)
     contacts = find_contacts(tubes, contact_threshold, box=box, method=contact_method)
     graph = build_graph(tubes, contacts, box, electrode_threshold=electrode_threshold)
     percolates = check_percolation(graph)
@@ -81,6 +89,7 @@ def create_sample(
         cnt_length=cnt_length,
         cnt_diameter=cnt_diameter,
         contact_threshold=contact_threshold,
+        orientation=orient_cfg,
     )
 
 
@@ -93,6 +102,7 @@ def run_sample(
     rng: np.random.Generator,
     electrode_threshold: float | None = None,
     contact_method: str = "auto",
+    orientation: OrientationConfig | None = None,
 ) -> SimulationResult:
     """Run a single Monte Carlo sample (fast evaluation path).
 
@@ -107,6 +117,7 @@ def run_sample(
     electrode_threshold : maximum distance to electrode to form contact
                           (defaults to contact_threshold if None)
     contact_method      : contact search algorithm ('auto', 'grid', 'hash', 'kdtree', 'brute_force')
+    orientation         : optional OrientationConfig (defaults to isotropic)
 
     Returns
     -------
@@ -116,7 +127,7 @@ def run_sample(
         electrode_threshold = contact_threshold
 
     n = count_from_concentration(concentration, box, cnt_length, cnt_diameter)
-    tubes = generate_nanotubes(n, box, cnt_length, cnt_diameter, rng)
+    tubes = generate_nanotubes(n, box, cnt_length, cnt_diameter, rng, orientation=orientation)
     contacts = find_contacts(tubes, contact_threshold, box=box, method=contact_method)
     graph = build_graph(tubes, contacts, box, electrode_threshold=electrode_threshold)
     percolates = check_percolation(graph)
@@ -183,6 +194,31 @@ def main() -> None:
         help="Contact detection algorithm (default: auto)",
     )
     parser.add_argument(
+        "--orientation-mode",
+        type=str,
+        default="isotropic",
+        choices=["isotropic", "aligned", "partially_aligned", "fisher"],
+        help="CNT orientation distribution mode (default: isotropic)",
+    )
+    parser.add_argument(
+        "--orientation-axis",
+        type=str,
+        default="x",
+        help="Preferred alignment axis: 'x', 'y', or 'z' (default: x)",
+    )
+    parser.add_argument(
+        "--max-angle",
+        type=float,
+        default=30.0,
+        help="Cone half-angle in degrees for partially_aligned mode (default: 30.0)",
+    )
+    parser.add_argument(
+        "--kappa",
+        type=float,
+        default=5.0,
+        help="Concentration parameter kappa for fisher mode (default: 5.0)",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -199,6 +235,12 @@ def main() -> None:
 
     box = MaterialBox(size_x=args.box_x, size_y=args.box_y, size_z=args.box_z)
     rng = np.random.default_rng(args.seed)
+    orientation = OrientationConfig(
+        mode=args.orientation_mode,
+        axis=args.orientation_axis,
+        max_angle_deg=args.max_angle,
+        kappa=args.kappa,
+    )
 
     print("=" * 65)
     print("  CNT Percolation Simulator - Single Sample Realization")
@@ -206,6 +248,7 @@ def main() -> None:
     print(f"Domain Box         : {box.size_x} x {box.size_y} x {box.size_z} um")
     ar = args.length / args.diameter if args.diameter > 0 else 0.0
     print(f"CNT Geometry       : L={args.length} um, D={args.diameter} um (Aspect Ratio={ar:.1f})")
+    print(f"Orientation        : {orientation.label} (S_x={orientation.theoretical_order_parameter('x'):.3f})")
     print(f"Contact Threshold  : {args.threshold} um")
     print(f"Contact Method     : {args.contact_method}")
     print(f"Concentration (phi): {args.phi:.4f}")
@@ -220,6 +263,7 @@ def main() -> None:
         contact_threshold=args.threshold,
         rng=rng,
         contact_method=args.contact_method,
+        orientation=orientation,
     )
 
     print(f"Nanotubes Placed   : {sample.nanotube_count}")

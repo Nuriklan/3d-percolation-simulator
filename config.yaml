@@ -23,6 +23,11 @@ box:
 cnt:
   length: 1.0
   diameter: 0.1
+  orientation:
+    mode: isotropic    # isotropic, aligned, partially_aligned, fisher
+    axis: x            # preferred axis: x, y, z, or [dx, dy, dz]
+    max_angle_deg: 90  # cone half-angle in degrees [0..90] (partially_aligned)
+    kappa: 0.0         # concentration parameter >= 0 (fisher)
 
 contact:
   threshold: 0.05

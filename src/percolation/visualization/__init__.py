@@ -8,11 +8,13 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from percolation.visualization.aspect_ratio_plot import plot_aspect_ratio_study
+    from percolation.visualization.orientation_plot import plot_orientation_study
     from percolation.visualization.renderer import plot_sample_3d
     from percolation.visualization.threshold_plot import plot_percolation_probability
 
 __all__ = [
     "plot_aspect_ratio_study",
+    "plot_orientation_study",
     "plot_percolation_probability",
     "plot_sample_3d",
 ]
@@ -28,4 +30,7 @@ def __getattr__(name: str):
     if name == "plot_aspect_ratio_study":
         import percolation.visualization.aspect_ratio_plot as _ar_plot
         return getattr(_ar_plot, name)
+    if name == "plot_orientation_study":
+        import percolation.visualization.orientation_plot as _or_plot
+        return getattr(_or_plot, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

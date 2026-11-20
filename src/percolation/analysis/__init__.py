@@ -1,5 +1,5 @@
 """
-Analysis sub-package for CNT percolation simulation (Phase 3 & 6).
+Analysis sub-package for CNT percolation simulation (Phase 3, 6 & 7).
 """
 
 from __future__ import annotations
@@ -13,6 +13,12 @@ if TYPE_CHECKING:
         PowerLawFitResult,
         fit_power_law,
         run_aspect_ratio_study,
+    )
+    from percolation.analysis.orientation import (
+        OrientationPoint,
+        OrientationStudyResult,
+        build_default_orientations,
+        run_orientation_study,
     )
     from percolation.analysis.threshold import (
         ConfidenceInterval,
@@ -31,8 +37,11 @@ __all__ = [
     "AspectRatioStudyResult",
     "ConfidenceInterval",
     "LogisticFitResult",
+    "OrientationPoint",
+    "OrientationStudyResult",
     "PowerLawFitResult",
     "ThresholdResult",
+    "build_default_orientations",
     "compute_confidence_intervals",
     "estimate_threshold",
     "estimate_threshold_linear",
@@ -40,6 +49,7 @@ __all__ = [
     "fit_power_law",
     "logistic_function",
     "run_aspect_ratio_study",
+    "run_orientation_study",
     "wilson_score_interval",
 ]
 
@@ -54,6 +64,14 @@ def __getattr__(name: str):
     }:
         import percolation.analysis.aspect_ratio as _ar_mod
         return getattr(_ar_mod, name)
+    if name in {
+        "OrientationPoint",
+        "OrientationStudyResult",
+        "build_default_orientations",
+        "run_orientation_study",
+    }:
+        import percolation.analysis.orientation as _or_mod
+        return getattr(_or_mod, name)
     if name in __all__:
         import percolation.analysis.threshold as _mod
         return getattr(_mod, name)
