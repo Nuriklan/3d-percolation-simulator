@@ -14,6 +14,11 @@ from pathlib import Path
 
 import numpy as np
 
+from percolation.domain.tunneling import (
+    ContactConductanceStats,
+    TunnelingConfig,
+)
+
 # ---------------------------------------------------------------------------
 # Primitive: 3-component vector
 # ---------------------------------------------------------------------------
@@ -320,11 +325,35 @@ class Contact:
     tube_a, tube_b : indices into the nanotube list
     distance       : minimum surface-to-surface distance, μm
                      (currently approximated as segment-to-segment distance)
+    conductance    : tunneling conductance G_ij (S or normalized units),
+                     None when tunneling model is disabled (binary contact)
+    resistance     : tunneling resistance R_ij = 1 / G_ij (Ohm or normalized),
+                     None when tunneling model is disabled (binary contact)
     """
 
     tube_a: int
     tube_b: int
     distance: float
+    conductance: float | None = None
+    resistance: float | None = None
+
+    @property
+    def has_conductance(self) -> bool:
+        """Return True if tunneling conductance & resistance are populated."""
+        return self.conductance is not None and self.resistance is not None
+
+    def to_dict(self) -> dict:
+        """Serialize contact to a plain dictionary."""
+        data: dict = {
+            "tube_a": self.tube_a,
+            "tube_b": self.tube_b,
+            "distance": self.distance,
+        }
+        if self.conductance is not None:
+            data["conductance"] = self.conductance
+        if self.resistance is not None:
+            data["resistance"] = self.resistance
+        return data
 
 
 # ---------------------------------------------------------------------------
@@ -337,20 +366,28 @@ class SimulationResult:
 
     Attributes
     ----------
-    concentration    : volumetric CNT fraction φ
-    nanotube_count   : number of CNTs placed
-    percolates       : True if a LEFT→RIGHT conductive path exists
-    contact_count    : number of CNT–CNT contacts found
+    concentration          : volumetric CNT fraction φ
+    nanotube_count         : number of CNTs placed
+    percolates             : True if a LEFT→RIGHT conductive path exists
+    contact_count          : number of CNT–CNT contacts found
+    avg_contact_conductance: arithmetic mean tunneling conductance across contacts (Phase 8)
+    geom_mean_conductance  : geometric mean tunneling conductance across contacts (Phase 8)
+    min_path_resistance    : lowest series resistance along LEFT→RIGHT path (Phase 8)
+    bottleneck_conductance : critical-path (max-min) conductance LEFT→RIGHT (Phase 8)
     """
 
     concentration: float
     nanotube_count: int
     percolates: bool
     contact_count: int = field(default=0)
+    avg_contact_conductance: float | None = None
+    geom_mean_conductance: float | None = None
+    min_path_resistance: float | None = None
+    bottleneck_conductance: float | None = None
 
 
 # ---------------------------------------------------------------------------
-# Full sample state for inspection and 3D visualization (Phase 4)
+# Full sample state for inspection and 3D visualization (Phase 4 & 8)
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -359,17 +396,23 @@ class SampleState:
 
     Attributes
     ----------
-    box                 : material domain box
-    tubes               : list of Nanotubes placed inside the box
-    contacts            : list of pairwise Contact instances
-    graph               : adjacency list representation of contact network
-    percolates          : True if LEFT to RIGHT path exists
-    percolating_cluster : set of nanotube indices in percolating network
-    percolating_path    : sequence of nodes from LEFT to RIGHT, or None
-    concentration       : volumetric CNT fraction φ
-    cnt_length          : length L of each nanotube, μm
-    cnt_diameter        : diameter D of each nanotube, μm
-    contact_threshold   : distance threshold for contact, μm
+    box                   : material domain box
+    tubes                 : list of Nanotubes placed inside the box
+    contacts              : list of pairwise Contact instances
+    graph                 : adjacency list representation of contact network
+    percolates            : True if LEFT to RIGHT path exists
+    percolating_cluster   : set of nanotube indices in percolating network
+    percolating_path      : shortest-hop sequence of nodes from LEFT to RIGHT, or None
+    concentration         : volumetric CNT fraction φ
+    cnt_length            : length L of each nanotube, μm
+    cnt_diameter          : diameter D of each nanotube, μm
+    contact_threshold     : distance threshold for contact, μm
+    orientation           : OrientationConfig (Phase 7)
+    tunneling             : optional TunnelingConfig (Phase 8)
+    weighted_graph        : conductance adjacency mapping u -> {v: G_uv} (Phase 8)
+    min_resistance_path   : lowest series-resistance path LEFT→RIGHT (Phase 8)
+    min_path_resistance   : total series resistance along min_resistance_path (Phase 8)
+    bottleneck_conductance: critical-path (max-min) conductance LEFT→RIGHT (Phase 8)
     """
 
     box: MaterialBox
@@ -384,6 +427,11 @@ class SampleState:
     cnt_diameter: float = 0.0
     contact_threshold: float = 0.0
     orientation: OrientationConfig = field(default_factory=OrientationConfig.isotropic)
+    tunneling: TunnelingConfig | None = None
+    weighted_graph: dict[int | str, dict[int | str, float]] | None = None
+    min_resistance_path: list[int | str] | None = None
+    min_path_resistance: float | None = None
+    bottleneck_conductance: float | None = None
 
     @property
     def nanotube_count(self) -> int:
@@ -393,12 +441,28 @@ class SampleState:
     def contact_count(self) -> int:
         return len(self.contacts)
 
+    def contact_conductance_stats(self) -> ContactConductanceStats:
+        """Compute summary statistics of contact distances & tunneling conductances."""
+        from percolation.domain.tunneling import summarize_contact_conductance
+
+        return summarize_contact_conductance(self.contacts)
+
     def to_simulation_result(self) -> SimulationResult:
+        avg_g: float | None = None
+        geom_g: float | None = None
+        if self.tunneling is not None and self.tunneling.enabled and self.contacts:
+            stats = self.contact_conductance_stats()
+            avg_g = stats.mean_conductance
+            geom_g = stats.geom_mean_conductance
         return SimulationResult(
             concentration=self.concentration,
             nanotube_count=self.nanotube_count,
             percolates=self.percolates,
             contact_count=self.contact_count,
+            avg_contact_conductance=avg_g,
+            geom_mean_conductance=geom_g,
+            min_path_resistance=self.min_path_resistance,
+            bottleneck_conductance=self.bottleneck_conductance,
         )
 
 
@@ -412,13 +476,17 @@ class ConcentrationResult:
 
     Attributes
     ----------
-    concentration       : volumetric CNT fraction φ
-    samples             : total number of Monte Carlo realizations
-    percolating_samples : number of realizations that percolated
-    probability         : percolation probability P(φ) = percolating_samples / samples
-    avg_contact_count   : mean number of contacts across all samples
-    avg_nanotube_count  : mean number of nanotubes across all samples
-    sample_results      : optional list of individual SimulationResult objects
+    concentration            : volumetric CNT fraction φ
+    samples                  : total number of Monte Carlo realizations
+    percolating_samples      : number of realizations that percolated
+    probability              : percolation probability P(φ) = percolating_samples / samples
+    avg_contact_count        : mean number of contacts across all samples
+    avg_nanotube_count       : mean number of nanotubes across all samples
+    sample_results           : optional list of individual SimulationResult objects
+    avg_contact_conductance  : mean of per-sample mean contact conductance (Phase 8)
+    avg_geom_mean_conductance: mean of per-sample geometric mean conductance (Phase 8)
+    avg_min_path_resistance  : mean lowest-resistance path across percolating samples (Phase 8)
+    avg_bottleneck_conductance: mean bottleneck conductance across percolating samples (Phase 8)
     """
 
     concentration: float
@@ -428,9 +496,13 @@ class ConcentrationResult:
     avg_contact_count: float = 0.0
     avg_nanotube_count: float = 0.0
     sample_results: list[SimulationResult] = field(default_factory=list)
+    avg_contact_conductance: float | None = None
+    avg_geom_mean_conductance: float | None = None
+    avg_min_path_resistance: float | None = None
+    avg_bottleneck_conductance: float | None = None
 
     def to_dict(self) -> dict:
-        data = {
+        data: dict = {
             "concentration": self.concentration,
             "samples": self.samples,
             "percolating_samples": self.percolating_samples,
@@ -438,16 +510,34 @@ class ConcentrationResult:
             "avg_contact_count": self.avg_contact_count,
             "avg_nanotube_count": self.avg_nanotube_count,
         }
+        if self.avg_contact_conductance is not None:
+            data["avg_contact_conductance"] = self.avg_contact_conductance
+        if self.avg_geom_mean_conductance is not None:
+            data["avg_geom_mean_conductance"] = self.avg_geom_mean_conductance
+        if self.avg_min_path_resistance is not None:
+            data["avg_min_path_resistance"] = self.avg_min_path_resistance
+        if self.avg_bottleneck_conductance is not None:
+            data["avg_bottleneck_conductance"] = self.avg_bottleneck_conductance
+
         if self.sample_results:
-            data["sample_results"] = [
-                {
+            sample_dicts = []
+            for s in self.sample_results:
+                sd: dict = {
                     "concentration": s.concentration,
                     "nanotube_count": s.nanotube_count,
                     "percolates": s.percolates,
                     "contact_count": s.contact_count,
                 }
-                for s in self.sample_results
-            ]
+                if s.avg_contact_conductance is not None:
+                    sd["avg_contact_conductance"] = s.avg_contact_conductance
+                if s.geom_mean_conductance is not None:
+                    sd["geom_mean_conductance"] = s.geom_mean_conductance
+                if s.min_path_resistance is not None:
+                    sd["min_path_resistance"] = s.min_path_resistance
+                if s.bottleneck_conductance is not None:
+                    sd["bottleneck_conductance"] = s.bottleneck_conductance
+                sample_dicts.append(sd)
+            data["sample_results"] = sample_dicts
         return data
 
 
@@ -463,6 +553,8 @@ class MonteCarloResult:
     contact_threshold     : contact distance threshold, μm
     random_seed           : base random seed
     concentration_results : list of ConcentrationResult for each tested concentration
+    orientation           : OrientationConfig (Phase 7)
+    tunneling             : optional TunnelingConfig (Phase 8)
     """
 
     box: MaterialBox
@@ -472,6 +564,7 @@ class MonteCarloResult:
     random_seed: int
     concentration_results: list[ConcentrationResult] = field(default_factory=list)
     orientation: OrientationConfig = field(default_factory=OrientationConfig.isotropic)
+    tunneling: TunnelingConfig | None = None
 
     @property
     def concentrations(self) -> list[float]:
@@ -498,22 +591,25 @@ class MonteCarloResult:
         )
 
     def to_dict(self) -> dict:
-        return {
-            "parameters": {
-                "box": {
-                    "size_x": self.box.size_x,
-                    "size_y": self.box.size_y,
-                    "size_z": self.box.size_z,
-                },
-                "cnt": {
-                    "length": self.cnt_length,
-                    "diameter": self.cnt_diameter,
-                    "aspect_ratio": self.cnt_length / self.cnt_diameter if self.cnt_diameter > 0 else 0.0,
-                    "orientation": self.orientation.to_dict(),
-                },
-                "contact_threshold": self.contact_threshold,
-                "random_seed": self.random_seed,
+        params: dict = {
+            "box": {
+                "size_x": self.box.size_x,
+                "size_y": self.box.size_y,
+                "size_z": self.box.size_z,
             },
+            "cnt": {
+                "length": self.cnt_length,
+                "diameter": self.cnt_diameter,
+                "aspect_ratio": self.cnt_length / self.cnt_diameter if self.cnt_diameter > 0 else 0.0,
+                "orientation": self.orientation.to_dict(),
+            },
+            "contact_threshold": self.contact_threshold,
+            "random_seed": self.random_seed,
+        }
+        if self.tunneling is not None:
+            params["tunneling"] = self.tunneling.to_dict()
+        return {
+            "parameters": params,
             "results": [r.to_dict() for r in self.concentration_results],
         }
 
@@ -528,28 +624,45 @@ class MonteCarloResult:
             json.dump(self.to_dict(), f, indent=indent)
 
     def save_csv(self, path: str | Path) -> None:
-        """Save P(φ) table to a CSV file."""
+        """Save P(φ) table (and tunneling metrics when enabled) to a CSV file."""
         import csv
         from pathlib import Path
 
+        include_tunneling = self.tunneling is not None and self.tunneling.enabled
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         with open(p, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([
+            headers = [
                 "concentration",
                 "samples",
                 "percolating_samples",
                 "probability",
                 "avg_contact_count",
                 "avg_nanotube_count",
-            ])
+            ]
+            if include_tunneling:
+                headers.extend([
+                    "avg_contact_conductance",
+                    "avg_geom_mean_conductance",
+                    "avg_min_path_resistance",
+                    "avg_bottleneck_conductance",
+                ])
+            writer.writerow(headers)
             for r in self.concentration_results:
-                writer.writerow([
+                row = [
                     r.concentration,
                     r.samples,
                     r.percolating_samples,
                     r.probability,
                     f"{r.avg_contact_count:.2f}",
                     f"{r.avg_nanotube_count:.2f}",
-                ])
+                ]
+                if include_tunneling:
+                    row.extend([
+                        f"{r.avg_contact_conductance:.6e}" if r.avg_contact_conductance is not None else "",
+                        f"{r.avg_geom_mean_conductance:.6e}" if r.avg_geom_mean_conductance is not None else "",
+                        f"{r.avg_min_path_resistance:.6e}" if r.avg_min_path_resistance is not None else "",
+                        f"{r.avg_bottleneck_conductance:.6e}" if r.avg_bottleneck_conductance is not None else "",
+                    ])
+                writer.writerow(row)

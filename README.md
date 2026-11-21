@@ -26,6 +26,7 @@ The simulator investigates electrical percolation in polymer-nanotube composite 
 | **5** | Spatial Optimization | ✅ Complete | Uniform 3D spatial grid (`UniformSpatialGrid`), sparse hashing (`SpatialHashGrid`), KD-tree (`KDTreeIndex`), and vectorized segment distance (`batch_segment_distance`) replacing $O(N^2)$ brute force with $>15\times$ speedup and zero false negatives. |
 | **6** | Aspect Ratio Study | ✅ Complete | Comparative Monte Carlo scaling study $\phi_c(AR) = C \cdot AR^{-\beta}$ confirming Balberg's excluded-volume law ($\beta \approx 1$), JSON/CSV export, and 2-panel publication plot. |
 | **7** | CNT Orientation Study | ✅ Complete | Configurable 3D orientation distributions (`isotropic`, `aligned`, `partially_aligned` cone, `fisher`), 3D Hermans order parameter $S_x$, adaptive $\phi_c(S_x)$ study, 2-panel visualization, and CLI/YAML support. |
+| **8** | Tunneling Contact Conductance | ✅ Complete | Exponential tunneling model $G_{ij}=G_0 e^{-\alpha d_{\text{eff}}}$, $R_{ij}=1/G_{ij}$, Simmons barrier helper, conductance-weighted contact graph, Dijkstra min-resistance path, AHL bottleneck conductance $G_c$, parametric $\alpha$ / $d_{\text{contact}}$ studies, and 4-panel visualization. |
 
 ---
 
@@ -176,6 +177,24 @@ Investigates the dependence of the percolation threshold $\phi_c$ on 3D CNT alig
 
 ---
 
+### Command H: Tunneling Contact Conductance Study (Phase 8)
+
+Investigates exponential quantum tunneling contacts $G_{ij} = G_0 e^{-\alpha \max(0, d_{ij} - d_{\min})}$, $R_{ij} = 1/G_{ij}$, sweeping either the tunneling decay constant $\alpha$ (`--mode alpha`) or the contact cutoff distance $d_{\text{contact}}$ (`--mode cutoff`), computing $\phi_c$, Dijkstra minimum-resistance paths, and Ambegaokar-Halperin-Langer bottleneck conductance $G_c$:
+
+```bash
+# Sweep tunneling decay constant alpha (at fixed G_min)
+.venv\Scripts\python.exe -m percolation.analysis.tunneling --mode alpha --alpha-values 30,50,80,120,180 --min-conductance 0.01 --samples 20 --output-dir results
+
+# Sweep contact cutoff distance d_contact (Experiment 3)
+.venv\Scripts\python.exe -m percolation.analysis.tunneling --mode cutoff --cutoff-values 0.01,0.03,0.05,0.08,0.12 --alpha 50 --samples 20 --output-dir results
+```
+
+**Generated Outputs in `results/`:**
+* `tunneling_study.json` & `tunneling_study.csv`: Threshold $\phi_c$, effective cutoff $d_{\text{eff}}$, peak bottleneck conductance $G_c$, and minimum series path resistance per configuration.
+* `tunneling_study.png`: Four-panel publication plot showing $G(d)/G_0$, $P(\phi)$ S-curves, $\phi_c$ trend, and bottleneck conductance $G_c(\phi)$.
+
+---
+
 ## 5. Python API Usage
 
 You can also use the simulator directly in Python scripts or Jupyter notebooks:
@@ -254,6 +273,13 @@ cnt:
 contact:
   threshold: 0.05 # Maximum segment-to-segment distance for electrical contact, um
   method: auto    # Acceleration: auto, grid, hash, kdtree, brute_force
+  tunneling:
+    enabled: false       # Activate Phase 8 exponential tunneling model
+    g0: 1.0              # Direct-contact conductance G0 (S or normalized)
+    alpha: 50.0          # Tunneling decay constant alpha (1/um)
+    d_min: 0.0           # Direct-contact / van der Waals distance clamp (um)
+    cutoff_distance: null
+    min_conductance: null
 
 simulation:
   concentrations: # Volumetric CNT fractions phi to evaluate

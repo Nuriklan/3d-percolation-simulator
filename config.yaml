@@ -32,6 +32,13 @@ cnt:
 contact:
   threshold: 0.05
   method: auto   # auto, grid, hash, kdtree, brute_force
+  tunneling:
+    enabled: false      # set true to activate Phase 8 exponential tunneling model
+    g0: 1.0             # direct-contact conductance G0 (S or normalized units)
+    alpha: 50.0         # exponential decay constant alpha (1/um): G(d) = G0 * exp(-alpha * d_eff)
+    d_min: 0.0          # direct-contact / van der Waals clamp distance (um)
+    cutoff_distance: null  # optional override for maximum tunneling distance (um)
+    min_conductance: null  # optional minimum conductance cutoff G_min (S)
 
 simulation:
   concentrations:
