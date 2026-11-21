@@ -1,5 +1,5 @@
 """
-Analysis sub-package for CNT percolation simulation (Phase 3, 6 & 7).
+Analysis sub-package for CNT percolation simulation (Phases 3, 6, 7 & 8).
 """
 
 from __future__ import annotations
@@ -31,6 +31,13 @@ if TYPE_CHECKING:
         logistic_function,
         wilson_score_interval,
     )
+    from percolation.analysis.tunneling import (
+        TunnelingPoint,
+        TunnelingStudyResult,
+        analyze_sample_tunneling,
+        run_contact_cutoff_study,
+        run_tunneling_alpha_study,
+    )
 
 __all__ = [
     "AspectRatioPoint",
@@ -41,6 +48,9 @@ __all__ = [
     "OrientationStudyResult",
     "PowerLawFitResult",
     "ThresholdResult",
+    "TunnelingPoint",
+    "TunnelingStudyResult",
+    "analyze_sample_tunneling",
     "build_default_orientations",
     "compute_confidence_intervals",
     "estimate_threshold",
@@ -49,7 +59,9 @@ __all__ = [
     "fit_power_law",
     "logistic_function",
     "run_aspect_ratio_study",
+    "run_contact_cutoff_study",
     "run_orientation_study",
+    "run_tunneling_alpha_study",
     "wilson_score_interval",
 ]
 
@@ -72,6 +84,15 @@ def __getattr__(name: str):
     }:
         import percolation.analysis.orientation as _or_mod
         return getattr(_or_mod, name)
+    if name in {
+        "TunnelingPoint",
+        "TunnelingStudyResult",
+        "analyze_sample_tunneling",
+        "run_contact_cutoff_study",
+        "run_tunneling_alpha_study",
+    }:
+        import percolation.analysis.tunneling as _tunn_mod
+        return getattr(_tunn_mod, name)
     if name in __all__:
         import percolation.analysis.threshold as _mod
         return getattr(_mod, name)

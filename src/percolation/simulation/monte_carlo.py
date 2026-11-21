@@ -1,13 +1,15 @@
 """
 Monte Carlo simulation runner for CNT percolation.
 
-Phase 2 & 5 implementation:
+Phases 2, 5, 7 & 8 implementation:
 - Loop over a range of concentrations φ.
 - Multiple independent, reproducible samples per concentration.
 - Statistical aggregation: P(φ) = N_percolating / N_samples.
 - Reproducibility via NumPy SeedSequence hierarchy.
 - Configuration loading from YAML and export to JSON/CSV.
 - Spatial acceleration (UniformSpatialGrid, KDTreeIndex, SpatialHashGrid) via contact_method.
+- CNT 3D orientation distributions via OrientationConfig.
+- Exponential tunneling conductance statistics via TunnelingConfig (Phase 8).
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from percolation.domain.cnt import (
     OrientationConfig,
     SimulationResult,
 )
+from percolation.domain.tunneling import TunnelingConfig
 from percolation.simulation.experiment import run_sample
 
 
@@ -43,6 +46,7 @@ def run_concentration(
     sample_callback: Callable[[int, SimulationResult], None] | None = None,
     contact_method: str = "auto",
     orientation: OrientationConfig | None = None,
+    tunneling: TunnelingConfig | None = None,
 ) -> ConcentrationResult:
     """Run Monte Carlo simulation for a single CNT concentration.
 
@@ -60,6 +64,7 @@ def run_concentration(
     sample_callback     : optional callback invoked after each sample (index, result)
     contact_method      : contact detection algorithm ('auto', 'grid', 'hash', 'kdtree', 'brute_force')
     orientation         : optional OrientationConfig (defaults to isotropic)
+    tunneling           : optional TunnelingConfig (Phase 8)
 
     Returns
     -------
@@ -80,6 +85,12 @@ def run_concentration(
     total_tubes = 0
     recorded_results: list[SimulationResult] = []
 
+    use_tunneling = tunneling is not None and tunneling.enabled
+    g_means: list[float] = []
+    g_geoms: list[float] = []
+    min_r_vals: list[float] = []
+    bn_g_vals: list[float] = []
+
     for idx, sseq in enumerate(child_seeds):
         rng = np.random.default_rng(sseq)
         sample_res = run_sample(
@@ -92,12 +103,23 @@ def run_concentration(
             electrode_threshold=electrode_threshold,
             contact_method=contact_method,
             orientation=orientation,
+            tunneling=tunneling if use_tunneling else None,
         )
 
         if sample_res.percolates:
             percolating_count += 1
         total_contacts += sample_res.contact_count
         total_tubes += sample_res.nanotube_count
+
+        if use_tunneling:
+            if sample_res.avg_contact_conductance is not None:
+                g_means.append(sample_res.avg_contact_conductance)
+            if sample_res.geom_mean_conductance is not None:
+                g_geoms.append(sample_res.geom_mean_conductance)
+            if sample_res.min_path_resistance is not None and np.isfinite(sample_res.min_path_resistance):
+                min_r_vals.append(sample_res.min_path_resistance)
+            if sample_res.bottleneck_conductance is not None:
+                bn_g_vals.append(sample_res.bottleneck_conductance)
 
         if record_samples:
             recorded_results.append(sample_res)
@@ -109,6 +131,11 @@ def run_concentration(
     avg_contacts = total_contacts / samples
     avg_tubes = total_tubes / samples
 
+    avg_g = float(np.mean(g_means)) if g_means else None
+    avg_geom_g = float(np.mean(g_geoms)) if g_geoms else None
+    avg_min_r = float(np.mean(min_r_vals)) if min_r_vals else None
+    avg_bn_g = float(np.mean(bn_g_vals)) if bn_g_vals else None
+
     return ConcentrationResult(
         concentration=concentration,
         samples=samples,
@@ -117,6 +144,10 @@ def run_concentration(
         avg_contact_count=avg_contacts,
         avg_nanotube_count=avg_tubes,
         sample_results=recorded_results,
+        avg_contact_conductance=avg_g,
+        avg_geom_mean_conductance=avg_geom_g,
+        avg_min_path_resistance=avg_min_r,
+        avg_bottleneck_conductance=avg_bn_g,
     )
 
 
@@ -133,6 +164,7 @@ def run_monte_carlo(
     concentration_callback: Callable[[int, int, ConcentrationResult], None] | None = None,
     contact_method: str = "auto",
     orientation: OrientationConfig | None = None,
+    tunneling: TunnelingConfig | None = None,
 ) -> MonteCarloResult:
     """Run full Monte Carlo study over multiple concentrations.
 
@@ -151,6 +183,7 @@ def run_monte_carlo(
                                 (conc_idx, total_concs, result)
     contact_method            : contact search method ('auto', 'grid', 'hash', 'kdtree', 'brute_force')
     orientation               : optional OrientationConfig (defaults to isotropic)
+    tunneling                 : optional TunnelingConfig (Phase 8)
 
     Returns
     -------
@@ -180,6 +213,7 @@ def run_monte_carlo(
             record_samples=record_samples,
             contact_method=contact_method,
             orientation=orient_cfg,
+            tunneling=tunneling,
         )
         concentration_results.append(conc_res)
 
@@ -194,6 +228,7 @@ def run_monte_carlo(
         random_seed=random_seed,
         concentration_results=concentration_results,
         orientation=orient_cfg,
+        tunneling=tunneling,
     )
 
 
@@ -203,6 +238,7 @@ def run_from_config(
     verbose: bool = True,
     contact_method: str | None = None,
     orientation: OrientationConfig | None = None,
+    tunneling: TunnelingConfig | None = None,
 ) -> MonteCarloResult:
     """Run Monte Carlo simulation configured via a YAML file."""
     path = Path(config_path)
@@ -226,6 +262,13 @@ def run_from_config(
         orient_raw = cfg.get("cnt", {}).get("orientation")
         orientation = OrientationConfig.from_dict(orient_raw)
 
+    # Tunneling priority: explicit argument > config > disabled (None)
+    if tunneling is None:
+        tunn_raw = cfg.get("contact", {}).get("tunneling")
+        if tunn_raw:
+            parsed_tunn = TunnelingConfig.from_dict(tunn_raw)
+            tunneling = parsed_tunn if parsed_tunn.enabled else None
+
     # Method priority: CLI override > config > default "auto"
     if contact_method is None:
         contact_method = str(cfg.get("contact", {}).get("method", "auto"))
@@ -234,36 +277,65 @@ def run_from_config(
     samples = int(cfg["simulation"]["samples_per_concentration"])
     seed = int(cfg["simulation"].get("random_seed", 42))
 
+    use_tunneling = tunneling is not None and tunneling.enabled
+
     if verbose:
-        print("=" * 70, flush=True)
+        print("=" * 78, flush=True)
         print("  CNT Percolation Simulator - Monte Carlo Simulation", flush=True)
-        print("=" * 70, flush=True)
+        print("=" * 78, flush=True)
         print(f"Domain Box           : {box.size_x} x {box.size_y} x {box.size_z} um", flush=True)
         print(f"CNT Dimensions       : L = {cnt_length} um, D = {cnt_diameter} um (AR = {cnt_length / cnt_diameter:.1f})", flush=True)
         print(f"CNT Orientation      : {orientation.label} (S_x = {orientation.theoretical_order_parameter('x'):.3f})", flush=True)
         print(f"Contact Threshold    : {contact_threshold} um", flush=True)
         print(f"Contact Method       : {contact_method}", flush=True)
+        if use_tunneling and tunneling is not None:
+            print(f"Tunneling Model      : {tunneling.label}", flush=True)
+            print(f"Effective Cutoff     : {tunneling.effective_cutoff(contact_threshold):.5f} um", flush=True)
         print(f"Concentrations (phi) : {concentrations}", flush=True)
         print(f"Samples per phi      : {samples}", flush=True)
         print(f"Master Seed          : {seed}", flush=True)
-        print("-" * 70, flush=True)
-        print(f"{'phi':>8} | {'N (avg)':>8} | {'Contacts':>10} | {'Percolated':>12} | {'P(phi)':>8} | {'Elapsed':>8}", flush=True)
-        print("-" * 70, flush=True)
+        print("-" * 78, flush=True)
+        if use_tunneling:
+            print(
+                f"{'phi':>8} | {'N (avg)':>8} | {'Contacts':>9} | {'Percolated':>11} | "
+                f"{'P(phi)':>7} | {'G_c (avg)':>10} | {'Elapsed':>7}",
+                flush=True,
+            )
+        else:
+            print(f"{'phi':>8} | {'N (avg)':>8} | {'Contacts':>10} | {'Percolated':>12} | {'P(phi)':>8} | {'Elapsed':>8}", flush=True)
+        print("-" * 78, flush=True)
 
     start_time = time.perf_counter()
 
     def progress_callback(idx: int, total: int, r: ConcentrationResult) -> None:
         if verbose:
             elapsed = time.perf_counter() - start_time
-            print(
-                f"{r.concentration:8.4f} | "
-                f"{r.avg_nanotube_count:8.1f} | "
-                f"{r.avg_contact_count:10.1f} | "
-                f"{r.percolating_samples:5d} / {r.samples:<5d} | "
-                f"{r.probability:8.3f} | "
-                f"{elapsed:7.2f}s",
-                flush=True,
-            )
+            if use_tunneling:
+                gc_str = (
+                    f"{r.avg_bottleneck_conductance:10.3e}"
+                    if r.avg_bottleneck_conductance is not None
+                    else f"{'N/A':>10}"
+                )
+                print(
+                    f"{r.concentration:8.4f} | "
+                    f"{r.avg_nanotube_count:8.1f} | "
+                    f"{r.avg_contact_count:9.1f} | "
+                    f"{r.percolating_samples:4d} / {r.samples:<4d} | "
+                    f"{r.probability:7.3f} | "
+                    f"{gc_str} | "
+                    f"{elapsed:6.2f}s",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"{r.concentration:8.4f} | "
+                    f"{r.avg_nanotube_count:8.1f} | "
+                    f"{r.avg_contact_count:10.1f} | "
+                    f"{r.percolating_samples:5d} / {r.samples:<5d} | "
+                    f"{r.probability:8.3f} | "
+                    f"{elapsed:7.2f}s",
+                    flush=True,
+                )
 
     result = run_monte_carlo(
         concentrations=concentrations,
@@ -277,19 +349,20 @@ def run_from_config(
         concentration_callback=progress_callback if verbose else None,
         contact_method=contact_method,
         orientation=orientation,
+        tunneling=tunneling,
     )
 
     if verbose:
         total_elapsed = time.perf_counter() - start_time
-        print("-" * 70, flush=True)
+        print("-" * 78, flush=True)
         print(f"Total simulation time: {total_elapsed:.2f} seconds", flush=True)
-        print("=" * 70, flush=True)
+        print("=" * 78, flush=True)
 
     return result
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Monte Carlo CNT Percolation Simulator (Phases 2, 3 & 5)")
+    parser = argparse.ArgumentParser(description="Monte Carlo CNT Percolation Simulator (Phases 2-8)")
     parser.add_argument(
         "--config",
         "-c",
@@ -337,6 +410,35 @@ def main() -> None:
         help="Concentration parameter kappa when --orientation-mode=fisher (default: 5.0)",
     )
     parser.add_argument(
+        "--tunneling",
+        action="store_true",
+        help="Enable tunneling contact conductance model (overrides config)",
+    )
+    parser.add_argument(
+        "--g0",
+        type=float,
+        default=1.0,
+        help="Direct-contact conductance G0 when --tunneling is set (default: 1.0 S)",
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=50.0,
+        help="Tunneling decay constant alpha (1/um) when --tunneling is set (default: 50.0)",
+    )
+    parser.add_argument(
+        "--d-min",
+        type=float,
+        default=0.0,
+        help="Direct-contact distance clamp d_min (um) when --tunneling is set (default: 0.0)",
+    )
+    parser.add_argument(
+        "--min-conductance",
+        type=float,
+        default=None,
+        help="Minimum conductance cutoff G_min when --tunneling is set",
+    )
+    parser.add_argument(
         "--no-threshold",
         action="store_true",
         help="Skip automatic percolation threshold estimation",
@@ -357,11 +459,22 @@ def main() -> None:
             kappa=args.kappa,
         )
 
+    tunneling_override = None
+    if args.tunneling:
+        tunneling_override = TunnelingConfig(
+            enabled=True,
+            g0=args.g0,
+            alpha=args.alpha,
+            d_min=args.d_min,
+            min_conductance=args.min_conductance,
+        )
+
     result = run_from_config(
         args.config,
         verbose=True,
         contact_method=args.contact_method,
         orientation=orientation_override,
+        tunneling=tunneling_override,
     )
 
     out_dir = Path(args.output_dir)

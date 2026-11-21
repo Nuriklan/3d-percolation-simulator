@@ -40,6 +40,8 @@ def plot_sample_3d(
     show_contacts: bool = True,
     highlight_cluster: bool = True,
     highlight_path: bool = True,
+    color_contacts_by_conductance: bool = False,
+    highlight_min_resistance_path: bool = False,
     ax: Axes3D | None = None,
     figsize: tuple[float, float] = (11, 8.5),
     view_elevation: float = 22.0,
@@ -52,20 +54,22 @@ def plot_sample_3d(
 
     Parameters
     ----------
-    sample            : SampleState containing box, tubes, contacts, and graph topology
-    show_electrodes   : whether to draw semi-transparent planar electrodes
-    show_box          : whether to draw the bounding wireframe of the material box
-    show_tubes        : whether to render CNT line segments
-    show_contacts     : whether to render contact points at tube intersections
-    highlight_cluster : whether to color tubes in the percolating cluster distinctly
-    highlight_path    : whether to highlight the shortest conductive LEFT-to-RIGHT path
-    ax                : optional pre-existing 3D Axes
-    figsize           : figure width and height in inches
-    view_elevation    : camera elevation angle in degrees
-    view_azimuth      : camera azimuthal angle in degrees
-    save_path         : optional path to save figure (.png, .pdf, .svg)
-    dpi               : resolution for saved figure
-    title             : custom title string (default provides parameter summary)
+    sample                        : SampleState containing box, tubes, contacts, and graph topology
+    show_electrodes               : whether to draw semi-transparent planar electrodes
+    show_box                      : whether to draw the bounding wireframe of the material box
+    show_tubes                    : whether to render CNT line segments
+    show_contacts                 : whether to render contact points at tube intersections
+    highlight_cluster             : whether to color tubes in the percolating cluster distinctly
+    highlight_path                : whether to highlight the conductive LEFT-to-RIGHT path
+    color_contacts_by_conductance : color contacts by log10(conductance) when tunneling is enabled
+    highlight_min_resistance_path : highlight Dijkstra minimum-resistance path instead of BFS path
+    ax                            : optional pre-existing 3D Axes
+    figsize                       : figure width and height in inches
+    view_elevation                : camera elevation angle in degrees
+    view_azimuth                  : camera azimuthal angle in degrees
+    save_path                     : optional path to save figure (.png, .pdf, .svg)
+    dpi                           : resolution for saved figure
+    title                         : custom title string (default provides parameter summary)
 
     Returns
     -------
@@ -166,10 +170,19 @@ def plot_sample_3d(
     # 3. CNT Line Segments (Categorized by Connectivity)
     # -----------------------------------------------------------------------
     if show_tubes and sample.tubes:
+        active_path = None
+        path_label_prefix = "Shortest Path"
+        if highlight_path and sample.percolates:
+            if highlight_min_resistance_path and sample.min_resistance_path:
+                active_path = sample.min_resistance_path
+                path_label_prefix = "Min-R Path"
+            elif sample.percolating_path:
+                active_path = sample.percolating_path
+
         path_tube_indices: set[int] = set()
-        if highlight_path and sample.percolates and sample.percolating_path:
+        if active_path:
             path_tube_indices = {
-                node for node in sample.percolating_path if isinstance(node, int)
+                node for node in active_path if isinstance(node, int)
             }
 
         cluster_tube_indices: set[int] = set()
@@ -225,7 +238,7 @@ def plot_sample_3d(
                 )
             )
 
-        # C: Shortest Conductive Backbone Path
+        # C: Conductive Backbone Path (BFS shortest-hop or Dijkstra min-resistance)
         if path_tube_indices:
             path_segs = [
                 (sample.tubes[i].p0, sample.tubes[i].p1)
@@ -243,7 +256,7 @@ def plot_sample_3d(
                     [0], [0],
                     color="#dc2626",
                     lw=3.2,
-                    label=f"Shortest Path ({len(path_tube_indices)} tubes)",
+                    label=f"{path_label_prefix} ({len(path_tube_indices)} tubes)",
                 )
             )
 
@@ -251,71 +264,114 @@ def plot_sample_3d(
     # 4. Contact Junctions
     # -----------------------------------------------------------------------
     if show_contacts and sample.contacts:
-        cluster_set = sample.percolating_cluster if sample.percolates else set()
-        cluster_contact_pts: list[np.ndarray] = []
-        other_contact_pts: list[np.ndarray] = []
+        has_conductance_vals = any(
+            c.conductance is not None and c.conductance > 0.0 for c in sample.contacts
+        )
 
-        for c in sample.contacts:
-            p_a, p_b, _ = nanotube_closest_points(
-                sample.tubes[c.tube_a], sample.tubes[c.tube_b]
-            )
-            midpoint = 0.5 * (p_a + p_b)
-
-            if c.tube_a in cluster_set and c.tube_b in cluster_set:
-                cluster_contact_pts.append(midpoint)
-            else:
-                other_contact_pts.append(midpoint)
-
-        # Draw other contacts
-        if other_contact_pts:
-            pts = np.array(other_contact_pts)
-            ax.scatter(
-                pts[:, 0],
-                pts[:, 1],
-                pts[:, 2],
-                color="#64748b",
-                s=16,
-                alpha=0.6,
-                marker="o",
-                depthshade=True,
-                label=f"Contacts (N = {len(sample.contacts)})",
-            )
-            legend_handles.append(
-                Line2D(
-                    [0], [0],
-                    marker="o",
-                    color="w",
-                    markerfacecolor="#64748b",
-                    markersize=6,
-                    label=f"Contacts ({len(sample.contacts)} total)",
+        if color_contacts_by_conductance and has_conductance_vals:
+            pts_list: list[np.ndarray] = []
+            log_g_list: list[float] = []
+            for c in sample.contacts:
+                if c.conductance is None or c.conductance <= 0.0:
+                    continue
+                p_a, p_b, _ = nanotube_closest_points(
+                    sample.tubes[c.tube_a], sample.tubes[c.tube_b]
                 )
-            )
+                pts_list.append(0.5 * (p_a + p_b))
+                log_g_list.append(float(np.log10(c.conductance)))
 
-        # Draw percolating cluster contacts
-        if cluster_contact_pts:
-            c_pts = np.array(cluster_contact_pts)
-            ax.scatter(
-                c_pts[:, 0],
-                c_pts[:, 1],
-                c_pts[:, 2],
-                color="#eab308",
-                edgecolors="#ca8a04",
-                s=32,
-                alpha=0.95,
-                marker="o",
-                depthshade=False,
-            )
-            legend_handles.append(
-                Line2D(
-                    [0], [0],
+            if pts_list:
+                pts = np.array(pts_list)
+                log_g = np.array(log_g_list)
+                sc = ax.scatter(
+                    pts[:, 0],
+                    pts[:, 1],
+                    pts[:, 2],
+                    c=log_g,
+                    cmap="plasma",
+                    s=28,
+                    alpha=0.92,
                     marker="o",
-                    color="w",
-                    markerfacecolor="#eab308",
-                    markeredgecolor="#ca8a04",
-                    markersize=7,
-                    label=f"Cluster Contacts ({len(cluster_contact_pts)})",
+                    depthshade=False,
                 )
-            )
+                cbar = fig.colorbar(sc, ax=ax, shrink=0.55, pad=0.08, aspect=18)
+                cbar.set_label("$\\log_{10}(G_{ij}\\,[\\mathrm{S}])$", fontsize=9)
+                legend_handles.append(
+                    Line2D(
+                        [0], [0],
+                        marker="o",
+                        color="w",
+                        markerfacecolor="#d97706",
+                        markersize=7,
+                        label=f"Tunneling Contacts ({len(pts_list)})",
+                    )
+                )
+        else:
+            cluster_set = sample.percolating_cluster if sample.percolates else set()
+            cluster_contact_pts: list[np.ndarray] = []
+            other_contact_pts: list[np.ndarray] = []
+
+            for c in sample.contacts:
+                p_a, p_b, _ = nanotube_closest_points(
+                    sample.tubes[c.tube_a], sample.tubes[c.tube_b]
+                )
+                midpoint = 0.5 * (p_a + p_b)
+
+                if c.tube_a in cluster_set and c.tube_b in cluster_set:
+                    cluster_contact_pts.append(midpoint)
+                else:
+                    other_contact_pts.append(midpoint)
+
+            # Draw other contacts
+            if other_contact_pts:
+                pts = np.array(other_contact_pts)
+                ax.scatter(
+                    pts[:, 0],
+                    pts[:, 1],
+                    pts[:, 2],
+                    color="#64748b",
+                    s=16,
+                    alpha=0.6,
+                    marker="o",
+                    depthshade=True,
+                    label=f"Contacts (N = {len(sample.contacts)})",
+                )
+                legend_handles.append(
+                    Line2D(
+                        [0], [0],
+                        marker="o",
+                        color="w",
+                        markerfacecolor="#64748b",
+                        markersize=6,
+                        label=f"Contacts ({len(sample.contacts)} total)",
+                    )
+                )
+
+            # Draw percolating cluster contacts
+            if cluster_contact_pts:
+                c_pts = np.array(cluster_contact_pts)
+                ax.scatter(
+                    c_pts[:, 0],
+                    c_pts[:, 1],
+                    c_pts[:, 2],
+                    color="#eab308",
+                    edgecolors="#ca8a04",
+                    s=32,
+                    alpha=0.95,
+                    marker="o",
+                    depthshade=False,
+                )
+                legend_handles.append(
+                    Line2D(
+                        [0], [0],
+                        marker="o",
+                        color="w",
+                        markerfacecolor="#eab308",
+                        markeredgecolor="#ca8a04",
+                        markersize=7,
+                        label=f"Cluster Contacts ({len(cluster_contact_pts)})",
+                    )
+                )
 
     # -----------------------------------------------------------------------
     # 5. Axes, Limits, Aspect Ratio & Camera
@@ -447,6 +503,40 @@ def main() -> None:
         help="Concentration parameter kappa for fisher mode (default: 5.0)",
     )
     parser.add_argument(
+        "--tunneling",
+        action="store_true",
+        help="Enable tunneling contact conductance model (Phase 8)",
+    )
+    parser.add_argument(
+        "--g0",
+        type=float,
+        default=1.0,
+        help="Base direct-contact conductance G0 in S (default: 1.0)",
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=50.0,
+        help="Tunneling decay constant alpha in 1/um (default: 50.0)",
+    )
+    parser.add_argument(
+        "--d-min",
+        type=float,
+        default=0.0,
+        help="Direct-contact clamp distance d_min in um (default: 0.0)",
+    )
+    parser.add_argument(
+        "--min-conductance",
+        type=float,
+        default=None,
+        help="Optional minimum contact conductance cutoff G_min in S",
+    )
+    parser.add_argument(
+        "--color-by-conductance",
+        action="store_true",
+        help="Color 3D contacts by log10(conductance) and highlight min-resistance path",
+    )
+    parser.add_argument(
         "-o", "--output",
         type=str,
         default="results/sample_3d.png",
@@ -462,6 +552,7 @@ def main() -> None:
     args = parser.parse_args()
 
     from percolation.domain.cnt import MaterialBox, OrientationConfig
+    from percolation.domain.tunneling import TunnelingConfig
     from percolation.simulation.experiment import create_sample
 
     box = MaterialBox(size_x=args.box_x, size_y=args.box_y, size_z=args.box_z)
@@ -471,6 +562,17 @@ def main() -> None:
         axis=args.orientation_axis,
         max_angle_deg=args.max_angle,
         kappa=args.kappa,
+    )
+    tunneling = (
+        TunnelingConfig(
+            enabled=True,
+            g0=args.g0,
+            alpha=args.alpha,
+            d_min=args.d_min,
+            min_conductance=args.min_conductance,
+        )
+        if args.tunneling
+        else None
     )
 
     print("=" * 65)
@@ -486,6 +588,7 @@ def main() -> None:
         contact_threshold=args.threshold,
         rng=rng,
         orientation=orientation,
+        tunneling=tunneling,
     )
 
     print(f"Placed {sample.nanotube_count} CNTs, found {sample.contact_count} contacts.")
@@ -495,9 +598,21 @@ def main() -> None:
         print(f"Percolating cluster size: {len(sample.percolating_cluster)} tubes")
         if sample.percolating_path:
             print(f"Shortest path length: {len(sample.percolating_path) - 2} tubes")
+        if sample.min_resistance_path and sample.min_path_resistance is not None:
+            print(
+                f"Min-resistance path: {len(sample.min_resistance_path) - 2} tubes "
+                f"(R_series = {sample.min_path_resistance:.4e} Ohm)"
+            )
 
     print(f"Rendering 3D scene to '{args.output}' (dpi={args.dpi}) ...")
-    plot_sample_3d(sample, save_path=args.output, dpi=args.dpi)
+    use_tunn_style = bool(args.color_by_conductance or args.tunneling)
+    plot_sample_3d(
+        sample,
+        color_contacts_by_conductance=use_tunn_style,
+        highlight_min_resistance_path=use_tunn_style,
+        save_path=args.output,
+        dpi=args.dpi,
+    )
     print(f"Successfully saved 3D visualization to '{args.output}'!")
     print("=" * 65)
 
